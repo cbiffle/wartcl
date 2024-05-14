@@ -229,26 +229,27 @@ pub fn list_at(v: &[u8], index: usize) -> Option<Box<Value>> {
 }
 
 fn list_append(v: Box<Value>, tail: &[u8]) -> Box<Value> {
-    let mut v = if !v.is_empty() {
-        append_string(Some(v), b" ")
-    } else {
-        v
-    };
+    let mut v = Vec::from(v);
+    v.reserve(tail.len() + 1);
 
-    if !tail.is_empty() {
-        let q = tail.iter().any(|&p| is_space(p) || is_special(p, false));
-        if q {
-            v = append_string(Some(v), b"{");
-        }
-        v = append_string(Some(v), tail);
-        if q {
-            v = append_string(Some(v), b"}");
-        }
-    } else {
-        v = append_string(Some(v), b"{}");
+    if !v.is_empty() {
+        v.push(b' ');
     }
 
-    v
+    if !tail.is_empty() {
+        let quoting_required = tail.iter().any(|&p| is_space(p) || is_special(p, false));
+        if quoting_required {
+            v.push(b'{');
+        }
+        v.extend_from_slice(tail);
+        if quoting_required {
+            v.push(b'}');
+        }
+    } else {
+        v.extend_from_slice(b"{}");
+    }
+
+    v.into()
 }
 
 struct Var {
