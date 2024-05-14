@@ -7,13 +7,12 @@ macro_rules! debug {
 }
 
 fn is_special(c: u8, q: bool) -> bool {
-    c == b'$' || (!q && (c == b'{' || c == b'}' || c == b';' || c == b'\r' || c == b'\n'))
-        || c == b'[' || c == b']' || c == b'"'
+    (!q && b"{};\r\n".contains(&c)) || b"$[]\"".contains(&c)
 }
 
-fn is_space(c: u8) -> bool { c == b' ' || c == b'\t' }
+fn is_space(c: u8) -> bool { b" \t".contains(&c) }
 
-fn is_end(c: u8) -> bool { c == b'\n' || c == b'\r' || c == b';' || c == b'\0' }
+fn is_end(c: u8) -> bool { b"\n\r;".contains(&c) }
 
 type Value = [u8];
 
