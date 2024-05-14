@@ -24,6 +24,9 @@ fn int(v: &[u8]) -> i32 {
 }
 
 fn append_string(v: Option<Box<Value>>, s: &Value) -> Box<Value> {
+    // TODO: because we never leave excess capacity in a value, this will
+    // _always_ make a copy, and doesn't need to take a Box by value. There's no
+    // benefit to it.
     let mut v = v.map(Vec::from).unwrap_or_default();
     v.extend_from_slice(s); 
     v.into()
@@ -46,19 +49,12 @@ pub enum Token {
 }
 
 fn next<'data>(mut s: &'data [u8], q: &mut bool) -> (Token, &'data [u8], &'data [u8]) {
-    //debug!("tcl_next({}, {})", String::from_utf8_lossy(s), *q);
     if !*q {
         // skip leading spaces
         while !s.is_empty() && is_space(s[0]) {
             s = &s[1..];
         }
     }
-
-    /*
-    if s.is_empty() {
-        return (Token::Cmd, &[], &[]);
-    }
-    */
 
     if !*q && s.first().map(|&c| is_end(c)).unwrap_or(false) {
         let (before, after) = s.split_at(1);
@@ -111,7 +107,7 @@ fn next<'data>(mut s: &'data [u8], q: &mut bool) -> (Token, &'data [u8], &'data 
             }
             // Character immediately after the quote must be space or
             // terminator.
-            if to.len() < 1 || (!is_space(to[0]) && !is_end(to[0])) {
+            if to.is_empty() || (!is_space(to[0]) && !is_end(to[0])) {
                 return (Token::Error, from, to);
             }
             return (Token::Word, from, to);
@@ -161,7 +157,6 @@ impl<'a> Parser<'a> {
             return None;
         }
         let (tok, from, to) = next(self.text, &mut self.q);
-        //debug!("({tok:?}, {}, {})", String::from_utf8_lossy(from), String::from_utf8_lossy(to));
         if !skiperr && tok == Token::Error {
             return None;
         }
@@ -258,10 +253,12 @@ struct Env {
     parent: Option<Box<Env>>,
 }
 
+type FnDyn = dyn Fn(&mut Tcl, &[u8]) -> Flow;
+
 struct Cmd {
     name: Box<Value>,
     arity: usize,
-    function: Rc<dyn Fn(&mut Tcl, &[u8]) -> Flow>,
+    function: Rc<FnDyn>,
     next: Option<Box<Cmd>>,
 }
 
@@ -280,10 +277,6 @@ fn env_var(env: &mut Env, name: Box<Value>) -> &mut Var {
         next,
     });
     env.vars.insert(var)
-}
-
-fn env_free(mut env: Box<Env>) -> Option<Box<Env>> {
-    env.parent.take()
 }
 
 pub struct Tcl {
