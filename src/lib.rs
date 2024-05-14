@@ -604,6 +604,36 @@ fn cmd_math(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
     result(tcl, Flow::Normal, text.into())
 }
 
+static STANDARD_COMMANDS: &[(&[u8], usize, StaticCmd)] = &[
+    (b"set", 0, cmd_set),
+    #[cfg(any(test, feature = "std"))]
+    (b"puts", 2, cmd_puts),
+    (b"subst", 2, cmd_subst),
+    (b"proc", 4, cmd_proc),
+    (b"if", 0, cmd_if),
+    (b"while", 3, cmd_while),
+    (b"break", 1, |_, _| Flow::Break),
+    (b"continue", 1, |_, _| Flow::Again),
+    (b"return", 0, |tcl, mut args| {
+        result(
+            tcl,
+            Flow::Return,
+            args.get_mut(1).map(mem::take).unwrap_or_default(),
+        )
+    }),
+    (b"+", 3, cmd_math),
+    (b"-", 3, cmd_math),
+    (b"*", 3, cmd_math),
+    (b"/", 3, cmd_math),
+    (b">", 3, cmd_math),
+    (b">=", 3, cmd_math),
+    (b"<", 3, cmd_math),
+    (b"<=", 3, cmd_math),
+    (b"==", 3, cmd_math),
+    (b"!=", 3, cmd_math),
+];
+type StaticCmd = fn(&mut Tcl, Vec<Box<Value>>) -> Flow;
+
 pub fn init() -> Tcl {
     let env = env_alloc(None);
 
@@ -613,22 +643,10 @@ pub fn init() -> Tcl {
         result: empty(),
     };
 
-    register(&mut tcl, b"set", 0, cmd_set);
-    #[cfg(any(test, feature = "std"))]
-    register(&mut tcl, b"puts", 2, cmd_puts);
-    register(&mut tcl, b"subst", 2, cmd_subst);
-    register(&mut tcl, b"proc", 4, cmd_proc);
-    register(&mut tcl, b"if", 0, cmd_if);
-    register(&mut tcl, b"while", 3, cmd_while);
-
-    register(&mut tcl, b"break", 1, |_, _| Flow::Break);
-    register(&mut tcl, b"continue", 1, |_, _| Flow::Again);
-    register(&mut tcl, b"return", 0, |tcl, mut args| result(tcl, Flow::Return, args.get_mut(1).map(mem::take).unwrap_or_default()));
-
-    let ops: [&[u8]; 10] = [b"+", b"-", b"*", b"/", b">", b">=", b"<", b"<=", b"==", b"!="];
-    for op in ops {
-        register(&mut tcl, op, 3, cmd_math);
+    for &(name, arity, function) in STANDARD_COMMANDS {
+        register(&mut tcl, name, arity, function);
     }
+
     tcl
 }
 
