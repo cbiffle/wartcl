@@ -487,8 +487,8 @@ fn cmd_puts(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
 }
 
 fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
-    let params = mem::take(&mut args[2]);
     let body = mem::take(&mut args[3]);
+    let params = mem::take(&mut args[2]);
     let name = &args[1];
     let mut body = Vec::from(body);
     body.push(b'\n');
@@ -538,12 +538,14 @@ fn cmd_if(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
 }
 
 fn cmd_while(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
-    let cond = mem::take(&mut args[1]);
-    let mut cond = Vec::from(cond);
-    cond.push(b'\n');
     let body = mem::take(&mut args[2]);
     let mut body = Vec::from(body);
     body.push(b'\n');
+
+    let cond = mem::take(&mut args[1]);
+    let mut cond = Vec::from(cond);
+    cond.push(b'\n');
+
     debug!("while body = {:?}", String::from_utf8_lossy(&body));
     loop {
         let r = eval(tcl, &cond);
@@ -565,9 +567,9 @@ fn cmd_while(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
 }
 
 fn cmd_math(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
-    let opval = &args[0];
-    let aval = &args[1];
     let bval = &args[2];
+    let aval = &args[1];
+    let opval = &args[0];
 
     let a = int(aval);
     let b = int(bval);
