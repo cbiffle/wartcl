@@ -10,3 +10,10 @@ edition = "2021"
 [profile.release]
 debug = true
 panic = "abort"
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "basic"
+harness = false
