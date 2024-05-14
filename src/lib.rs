@@ -891,6 +891,11 @@ mod test {
                    $a]\" ; set a [+ $a 1]}",
                    b"0");
         drop(tcl);
+
+        // Weirdly, the partcl tests don't have any tests for procs with >2
+        // arguments. Let's fix that.
+        check_eval(None, b"proc sum_of_squares {x y} { + [* $x $x] [* $y $y] }; sum_of_squares 9 10",
+                   b"181");
     }
     
     #[test]
