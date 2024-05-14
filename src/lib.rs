@@ -48,15 +48,22 @@ pub enum Token {
     Error,
 }
 
-fn next<'data>(mut s: &'data [u8], q: &mut bool) -> (Token, &'data [u8], &'data [u8]) {
-    if !*q {
-        // skip leading spaces
-        while !s.is_empty() && is_space(s[0]) {
-            s = &s[1..];
+fn skip_leading_whitespace(s: &mut &[u8]) {
+    while let Some((&first, next)) = s.split_first() {
+        if is_space(first) {
+            *s = next;
+        } else {
+            break;
         }
     }
+}
 
-    if !*q && s.first().map(|&c| is_end(c)).unwrap_or(false) {
+fn next<'data>(mut s: &'data [u8], quote_mode: &mut bool) -> (Token, &'data [u8], &'data [u8]) {
+    if !*quote_mode {
+        skip_leading_whitespace(&mut s);
+    }
+
+    if !*quote_mode && s.first().map(|&c| is_end(c)).unwrap_or(false) {
         let (before, after) = s.split_at(1);
         return (Token::Cmd, before, after);
     }
@@ -66,20 +73,16 @@ fn next<'data>(mut s: &'data [u8], q: &mut bool) -> (Token, &'data [u8], &'data 
         if s.get(1).map(|&c| is_space(c) || c == b'"').unwrap_or(false) {
             return (Token::Error, s, &[]);
         }
-        let mode = *q;
-        *q = false;
-        let (subtoken, subused, subrest) = next(&s[1..], q);
-        *q = mode;
+        let (subtoken, subused, subrest) = next(&s[1..], &mut false);
         return (
-            if subtoken == Token::Word && *q { Token::Part } else { subtoken },
+            if subtoken == Token::Word && *quote_mode { Token::Part } else { subtoken },
             &s[..subused.len() + 1],
             subrest,
         );
     }
 
-    let i = if let Some(open) = s.first().copied() {
-        //debug!("{open:?}");
-        if open == b'[' || (!*q && open == b'{') {
+    let i = if let Some((&open, after)) = s.split_first() {
+        if open == b'[' || (!*quote_mode && open == b'{') {
             // interleaving pairs are not welcome, but it simplifies the code
             let close = if open == b'[' { b']' } else { b'}' };
             let mut depth = 1;
@@ -96,55 +99,61 @@ fn next<'data>(mut s: &'data [u8], q: &mut bool) -> (Token, &'data [u8], &'data 
                 false
             }).unwrap_or(s.len())
         } else if open == b'"' {
-            *q = !*q;
+            *quote_mode = !*quote_mode;
 
             // *from = *to = s + 1;
             let from = &[];
-            let to = &s[1..];
+            let to = after;
 
-            if *q {
+            if *quote_mode {
+                // We have just _entered_ a quoted string.
                 return (Token::Part, from, to);
             }
+            // Otherwise, we are exiting a quoted string.
+
             // Character immediately after the quote must be space or
             // terminator.
-            if to.is_empty() || (!is_space(to[0]) && !is_end(to[0])) {
-                return (Token::Error, from, to);
-            }
-            return (Token::Word, from, to);
+            let token = if to.is_empty() || (!is_space(to[0]) && !is_end(to[0])) {
+                Token::Error
+            } else {
+                Token::Word
+            };
+            return (token, from, to);
         } else if open == b']' || open == b'}' {
             // unbalanced bracket or brace
             return (Token::Error, s, &[]);
         } else {
-            s.iter().position(|&c| !((*q || !is_space(c)) && !is_special(c, *q))).unwrap_or(s.len())
+            s.iter().position(|&c| (!*quote_mode && is_space(c))
+                              || is_special(c, *quote_mode))
+                .unwrap_or(s.len())
         }
     } else {
         0
     };
     let (from, to) = s.split_at(i);
-    let token = if let Some(&first) = to.first() {
-        if *q {
-            Token::Part
-        } else if is_space(first) || is_end(first) {
-            Token::Word
-        } else {
-            Token::Part
-        }
+    let Some(&first) = to.first() else {
+        return (Token::Error, from, to);
+    };
+    let token = if *quote_mode {
+        Token::Part
+    } else if is_space(first) || is_end(first) {
+        Token::Word
     } else {
-        Token::Error
+        Token::Part
     };
     (token, from, to)
 }
 
 pub struct Parser<'a> {
     text: &'a [u8],
-    q: bool,
+    quote_mode: bool,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(text: &'a [u8]) -> Self {
         Self {
             text,
-            q: false,
+            quote_mode: false,
         }
     }
 
@@ -156,7 +165,7 @@ impl<'a> Parser<'a> {
         if self.text.is_empty() {
             return None;
         }
-        let (tok, from, to) = next(self.text, &mut self.q);
+        let (tok, from, to) = next(self.text, &mut self.quote_mode);
         if !skiperr && tok == Token::Error {
             return None;
         }
@@ -199,13 +208,7 @@ fn list_at(v: &[u8], index: usize) -> Option<Box<Value>> {
         }
     }
     if i == index {
-        while !rest.is_empty() {
-            if is_space(rest[0]) {
-                rest = &rest[1..];
-            } else {
-                break;
-            }
-        }
+        skip_leading_whitespace(&mut rest);
 
         if !rest.is_empty() {
             if rest[0] == b'{' {
