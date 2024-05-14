@@ -1,16 +1,13 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 
 extern crate alloc;
-
 use core::mem;
 use alloc::rc::Rc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 macro_rules! debug {
-    ($($x:tt)*) => {
-        //println!($($x)*)
-    };
+    ($($x:tt)*) => { /* println!($($x)*) */ };
 }
 
 fn is_special(c: u8, q: bool) -> bool {
@@ -30,15 +27,6 @@ pub fn int(v: &[u8]) -> i32 {
         .unwrap_or(0)
 }
 
-fn append_string(v: Option<Box<Value>>, s: &Value) -> Box<Value> {
-    // TODO: because we never leave excess capacity in a value, this will
-    // _always_ make a copy, and doesn't need to take a Box by value. There's no
-    // benefit to it.
-    let mut v = v.map(Vec::from).unwrap_or_default();
-    v.extend_from_slice(s); 
-    v.into()
-}
-
 fn flatten_string(v: &[Box<Value>]) -> Box<Value> {
     let len = v.iter().map(|component| component.len()).sum::<usize>();
     let mut out = Vec::with_capacity(len);
@@ -46,10 +34,6 @@ fn flatten_string(v: &[Box<Value>]) -> Box<Value> {
         out.extend_from_slice(component);
     }
     out.into()
-}
-
-fn list_alloc() -> Box<Value> {
-    Box::new([])
 }
 
 fn empty() -> Box<Value> {
@@ -237,58 +221,6 @@ pub fn list_at(v: &[u8], index: usize) -> Option<Box<Value>> {
     None
 }
 
-fn list_append(v: Box<Value>, tail: &[u8]) -> Box<Value> {
-    let mut v = Vec::from(v);
-    v.reserve(tail.len() + 1);
-
-    if !v.is_empty() {
-        v.push(b' ');
-    }
-
-    if !tail.is_empty() {
-        let quoting_required = tail.iter().any(|&p| is_space(p) || is_special(p, false));
-        if quoting_required {
-            v.push(b'{');
-        }
-        v.extend_from_slice(tail);
-        if quoting_required {
-            v.push(b'}');
-        }
-    } else {
-        v.extend_from_slice(b"{}");
-    }
-
-    v.into()
-}
-
-fn list_join(v: &[Box<Value>]) -> Box<Value> {
-    // The initial capacity is merely a guess, taken without processing all the
-    // inputs for quotedness.
-    let len = v.iter().map(|comp| comp.len()).sum::<usize>();
-    let mut out = Vec::with_capacity(len + v.len().saturating_sub(1));
-
-    for comp in v {
-        if !out.is_empty() {
-            out.push(b' ');
-        }
-
-        if !comp.is_empty() {
-            let quoting_required = comp.iter().any(|&p| is_space(p) || is_special(p, false));
-            if quoting_required {
-                out.push(b'{');
-            }
-            out.extend_from_slice(comp);
-            if quoting_required {
-                out.push(b'}');
-            }
-        } else {
-            out.extend_from_slice(b"{}");
-        }
-    }
-
-    out.into()
-}
-
 struct Var {
     name: Box<Value>,
     value: Box<Value>,
@@ -318,15 +250,15 @@ fn env_alloc(parent: Option<Box<Env>>) -> Box<Env> {
 }
 
 fn env_var(env: &mut Env, name: Box<Value>) -> &mut Var {
-    let next = env.vars.take();
     let var = Box::new(Var {
         name,
         value: Box::new([]),
-        next,
+        next: env.vars.take(),
     });
     env.vars.insert(var)
 }
 
+#[derive(Default)]
 pub struct Tcl {
     env: Box<Env>,
     cmds: Option<Box<Cmd>>,
@@ -639,8 +571,7 @@ pub fn init() -> Tcl {
 
     let mut tcl = Tcl {
         env,
-        cmds: None,
-        result: empty(),
+        ..Tcl::default()
     };
 
     for &(name, arity, function) in STANDARD_COMMANDS {
@@ -649,7 +580,6 @@ pub fn init() -> Tcl {
 
     tcl
 }
-
 
 #[cfg(test)]
 mod test {
