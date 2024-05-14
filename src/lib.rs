@@ -174,51 +174,32 @@ impl<'a> Parser<'a> {
     }
 }
 
-fn list_length(v: &[u8]) -> usize {
-    debug!("list length...");
-    let mut count = 0;
-    let mut p = Parser::new(v);
-    while let Some((tok, _)) = p.next(false) {
-        if tok == Token::Word {
-            count += 1;
-        }
-    }
-    if !v.is_empty() {
-        count += 1;
-    }
-    debug!("list length is {count}");
-    count
-}
+pub fn parse_list(v: &[u8]) -> Vec<Box<Value>> {
+    let mut words = Vec::new();
 
-pub fn list_at(v: &[u8], index: usize) -> Option<Box<Value>> {
-    let mut i = 0;
     let mut p = Parser::new(v);
     let mut rest = v;
     while let Some((tok, from)) = p.next(false) {
         rest = p.text;
         if tok == Token::Word {
-            if i == index {
-                if from[0] == b'{' {
-                    return Some(from[1..from.len() - 1].into());
-                } else {
-                    return Some(from.into());
-                }
-            }
-            i += 1;
-        }
-    }
-    if i == index {
-        skip_leading_whitespace(&mut rest);
-
-        if !rest.is_empty() {
-            if rest[0] == b'{' {
-                return Some(rest[1..rest.len() - 1].into());
+            words.push(if from[0] == b'{' {
+                from[1..from.len() - 1].into()
             } else {
-                return Some(rest.into());
-            }
+                from.into()
+            });
         }
     }
-    None
+    skip_leading_whitespace(&mut rest);
+
+    if !rest.is_empty() {
+        words.push(if rest[0] == b'{' {
+            rest[1..rest.len() - 1].into()
+        } else {
+            rest.into()
+        });
+    }
+
+    words
 }
 
 struct Var {
@@ -426,13 +407,14 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
     body.push(b'\n');
     let body = body;
 
+    let parsed_params = parse_list(&params);
+
     register(tcl, name, 0, move |tcl, mut act_args| {
         tcl.env = env_alloc(Some(mem::take(&mut tcl.env)));
 
-        for i in 0..list_length(&params) {
-            let param = list_at(&params, i).unwrap();
+        for (i, param) in parsed_params.iter().enumerate() {
             let v = act_args.get_mut(i + 1).map(mem::take);
-            var(tcl, param, v);
+            var(tcl, param.clone(), v);
         }
         eval(tcl, &body);
 
