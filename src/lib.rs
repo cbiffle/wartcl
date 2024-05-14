@@ -39,6 +39,15 @@ fn append_string(v: Option<Box<Value>>, s: &Value) -> Box<Value> {
     v.into()
 }
 
+fn flatten_string(v: &[Box<Value>]) -> Box<Value> {
+    let len = v.iter().map(|component| component.len()).sum::<usize>();
+    let mut out = Vec::with_capacity(len);
+    for component in v {
+        out.extend_from_slice(component);
+    }
+    out.into()
+}
+
 fn list_alloc() -> Box<Value> {
     Box::new([])
 }
@@ -252,6 +261,34 @@ fn list_append(v: Box<Value>, tail: &[u8]) -> Box<Value> {
     v.into()
 }
 
+fn list_join(v: &[Box<Value>]) -> Box<Value> {
+    // The initial capacity is merely a guess, taken without processing all the
+    // inputs for quotedness.
+    let len = v.iter().map(|comp| comp.len()).sum::<usize>();
+    let mut out = Vec::with_capacity(len + v.len().saturating_sub(1));
+
+    for comp in v {
+        if !out.is_empty() {
+            out.push(b' ');
+        }
+
+        if !comp.is_empty() {
+            let quoting_required = comp.iter().any(|&p| is_space(p) || is_special(p, false));
+            if quoting_required {
+                out.push(b'{');
+            }
+            out.extend_from_slice(comp);
+            if quoting_required {
+                out.push(b'}');
+            }
+        } else {
+            out.extend_from_slice(b"{}");
+        }
+    }
+
+    out.into()
+}
+
 struct Var {
     name: Box<Value>,
     value: Box<Value>,
@@ -264,7 +301,7 @@ struct Env {
     parent: Option<Box<Env>>,
 }
 
-type FnDyn = dyn Fn(&mut Tcl, &[u8]) -> Flow;
+type FnDyn = dyn Fn(&mut Tcl, &[Box<Value>]) -> Flow;
 
 struct Cmd {
     name: Box<Value>,
@@ -359,8 +396,8 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
     debug!("eval({:?})", String::from_utf8_lossy(s));
     let mut p = Parser::new(s);
 
-    let mut cur = None;
-    let mut list = list_alloc();
+    let mut cur = Vec::new();
+    let mut list = Vec::new();
 
     while let Some((tok, from)) = p.next(true) {
         match tok {
@@ -369,29 +406,28 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
             Token::Word => {
                 // N.B. result ignored in original
                 subst(tcl, from);
-                cur = Some(append_string(cur.take(), &tcl.result));
-                list = list_append(list, cur.as_ref().unwrap());
-                cur = None;
+                cur.push(tcl.result.clone());
+                list.push(flatten_string(&cur));
+                cur.clear();
             }
 
             Token::Part => {
                 subst(tcl, from);
-                cur = Some(append_string(cur.take(), &tcl.result));
+                cur.push(tcl.result.clone());
             }
             Token::Cmd => {
-                let n = list_length(&list);
-                debug!("list = {:?} ({n})", String::from_utf8_lossy(&list));
+                let n = list.len();
                 if n == 0 {
                     debug!("Cmd with zero length list");
                     result(tcl, Flow::Normal, empty());
                 } else {
                     debug!("Cmd with proper list");
-                    let cmdname = list_at(&list, 0).unwrap(); // N.B. lolwut
+                    let cmdname = &*list[0];
                     debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
                     let mut cmd = tcl.cmds.as_deref();
                     let mut r = Flow::Error;
                     while let Some(c) = cmd.take() {
-                        if c.name == cmdname && (c.arity == 0 || c.arity == n) {
+                        if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
                             debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
                             let f = Rc::clone(&c.function);
                             r = f(tcl, &list);
@@ -406,7 +442,7 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
                     }
                     debug!("normal");
                     // Reset command list
-                    list = list_alloc();
+                    list.clear();
                 }
             }
         }
@@ -420,7 +456,7 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
 
 
 
-pub fn register(tcl: &mut Tcl, name: &[u8], arity: usize, function: impl Fn(&mut Tcl, &[u8]) -> Flow + 'static) {
+pub fn register(tcl: &mut Tcl, name: &[u8], arity: usize, function: impl Fn(&mut Tcl, &[Box<Value>]) -> Flow + 'static) {
     let next = tcl.cmds.take();
     tcl.cmds = Some(Box::new(Cmd {
         name: name.into(),
@@ -431,42 +467,42 @@ pub fn register(tcl: &mut Tcl, name: &[u8], arity: usize, function: impl Fn(&mut
 }
 
 
-fn cmd_set(tcl: &mut Tcl, args: &[u8]) -> Flow {
-    let name = list_at(args, 1).unwrap();
-    let val = list_at(args, 2);
+fn cmd_set(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+    let name = args[1].clone();
+    let val = args.get(2).cloned();
 
     let v = var(tcl, name, val);
     result(tcl, Flow::Normal, v)
 }
 
-fn cmd_subst(tcl: &mut Tcl, args: &[u8]) -> Flow {
-    let s = list_at(args, 1).unwrap();
-    subst(tcl, &s)
+fn cmd_subst(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+    let s = &args[1];
+    subst(tcl, s)
 }
 
 #[cfg(any(test, feature = "std"))]
-fn cmd_puts(tcl: &mut Tcl, args: &[u8]) -> Flow {
-    let str = list_at(args, 1).unwrap();
-    println!("{}", String::from_utf8_lossy(&str));
-    result(tcl, Flow::Normal, str)
+fn cmd_puts(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+    let str = &args[1];
+    println!("{}", String::from_utf8_lossy(str));
+    result(tcl, Flow::Normal, str.clone())
 }
 
-fn cmd_proc(tcl: &mut Tcl, args: &[u8]) -> Flow {
-    let name = list_at(args, 1).unwrap();
-    let args: Box<Value> = args.into();
-    register(tcl, &name, 0, move |tcl, act_args| {
-        let params = list_at(&args, 2).unwrap();
-        let body = list_at(&args, 3).unwrap();
+fn cmd_proc(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+    let name = &args[1];
+    let params = args[2].clone();
+    let body = args[3].clone();
+    let mut body = Vec::from(body);
+    body.push(b'\n');
+    let body = body;
 
+    register(tcl, name, 0, move |tcl, act_args| {
         tcl.env = env_alloc(Some(mem::take(&mut tcl.env)));
 
         for i in 0..list_length(&params) {
             let param = list_at(&params, i).unwrap();
-            let v = list_at(act_args, i + 1).unwrap();
-            var(tcl, param, v.into());
+            let v = act_args.get(i + 1).cloned();
+            var(tcl, param, v);
         }
-        let mut body = Vec::from(body);
-        body.push(b'\n');
         eval(tcl, &body);
 
         let parent_env = tcl.env.parent.take().unwrap();
@@ -477,25 +513,21 @@ fn cmd_proc(tcl: &mut Tcl, args: &[u8]) -> Flow {
     result(tcl, Flow::Normal, empty())
 }
 
-fn cmd_if(tcl: &mut Tcl, args: &[u8]) -> Flow {
-    let n = list_length(args);
+fn cmd_if(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+    let n = args.len();
     let mut r = Flow::Normal;
     let mut i = 1;
     while i < n {
-        let cond = list_at(args, i).unwrap();
-        let branch = if i + 1 < n {
-            list_at(args, i + 1)
-        } else {
-            None
-        };
-        let mut cond = Vec::from(cond);
+        let cond = &args[i];
+        let branch = args.get(i + 1);
+        let mut cond = Vec::from(cond.clone());
         cond.push(b'\n');
         r = eval(tcl, &cond);
         if r != Flow::Normal {
             break;
         }
         if int(&tcl.result) != 0 {
-            let mut branch = Vec::from(branch.unwrap());
+            let mut branch = Vec::from(branch.unwrap().clone());
             branch.push(b'\n');
             r = eval(tcl, &branch);
             break;
@@ -506,11 +538,11 @@ fn cmd_if(tcl: &mut Tcl, args: &[u8]) -> Flow {
     r
 }
 
-fn cmd_while(tcl: &mut Tcl, args: &[u8]) -> Flow {
-    let cond = list_at(args, 1).unwrap();
+fn cmd_while(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+    let cond = args[1].clone();
     let mut cond = Vec::from(cond);
     cond.push(b'\n');
-    let body = list_at(args, 2).unwrap();
+    let body = args[2].clone();
     let mut body = Vec::from(body);
     body.push(b'\n');
     debug!("while body = {:?}", String::from_utf8_lossy(&body));
@@ -533,15 +565,15 @@ fn cmd_while(tcl: &mut Tcl, args: &[u8]) -> Flow {
     }
 }
 
-fn cmd_math(tcl: &mut Tcl, args: &[u8]) -> Flow {
-    let opval = list_at(args, 0).unwrap();
-    let aval = list_at(args, 1).unwrap();
-    let bval = list_at(args, 2).unwrap();
+fn cmd_math(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+    let opval = &args[0];
+    let aval = &args[1];
+    let bval = &args[2];
 
-    let a = int(&aval);
-    let b = int(&bval);
+    let a = int(aval);
+    let b = int(bval);
 
-    let c = match &*opval {
+    let c = match &**opval {
         b"+" => a + b,
         b"-" => a - b,
         b"*" => a * b,
@@ -590,7 +622,7 @@ pub fn init() -> Tcl {
 
     register(&mut tcl, b"break", 1, |_, _| Flow::Break);
     register(&mut tcl, b"continue", 1, |_, _| Flow::Again);
-    register(&mut tcl, b"return", 0, |tcl, args| result(tcl, Flow::Return, list_at(args, 1).unwrap_or_default()));
+    register(&mut tcl, b"return", 0, |tcl, args| result(tcl, Flow::Return, args.get(1).cloned().unwrap_or_default()));
 
     let ops: [&[u8]; 10] = [b"+", b"-", b"*", b"/", b">", b">=", b"<", b"<=", b"==", b"!="];
     for op in ops {
