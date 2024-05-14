@@ -406,14 +406,14 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
             Token::Word => {
                 // N.B. result ignored in original
                 subst(tcl, from);
-                cur.push(tcl.result.clone());
+                cur.push(mem::take(&mut tcl.result));
                 list.push(flatten_string(&cur));
                 cur.clear();
             }
 
             Token::Part => {
                 subst(tcl, from);
-                cur.push(tcl.result.clone());
+                cur.push(mem::take(&mut tcl.result));
             }
             Token::Cmd => {
                 let n = list.len();
@@ -915,8 +915,12 @@ mod test {
                    b"C");
 
         check_eval(None, b"while {< $x 5} {set x [+ $x 1]}", b"0");
+        // DEVIATION: partcl break returns the string "break". It does this due
+        // to an almost accidental leaving-around of state. I have fixed this; a
+        // loop exited with "break" now returns the empty string like in normal
+        // Tcl.
         check_eval(None, b"while {== 1 1} {set x [+ $x 1]; if {== $x 5} {break}}",
-                   b"break");
+                   b"");
         check_eval(
             None,
             b"while {== 1 1} {set x [+ $x 1]; if {!= $x 5} {continue} ; return foo}",
