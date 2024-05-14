@@ -1,4 +1,11 @@
-use std::{mem, rc::Rc};
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
+
+extern crate alloc;
+
+use core::mem;
+use alloc::rc::Rc;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 macro_rules! debug {
     ($($x:tt)*) => {
@@ -16,8 +23,8 @@ fn is_end(c: u8) -> bool { b"\n\r;".contains(&c) }
 
 type Value = [u8];
 
-fn int(v: &[u8]) -> i32 {
-    std::str::from_utf8(v)
+pub fn int(v: &[u8]) -> i32 {
+    core::str::from_utf8(v)
         .ok()
         .and_then(|s| s.parse::<i32>().ok())
         .unwrap_or(0)
@@ -190,7 +197,7 @@ fn list_length(v: &[u8]) -> usize {
     count
 }
 
-fn list_at(v: &[u8], index: usize) -> Option<Box<Value>> {
+pub fn list_at(v: &[u8], index: usize) -> Option<Box<Value>> {
     let mut i = 0;
     let mut p = Parser::new(v);
     let mut rest = v;
@@ -319,7 +326,7 @@ pub enum Flow {
     Again,
 }
 
-fn result(tcl: &mut Tcl, flow: Flow, value: Box<Value>) -> Flow {
+pub fn result(tcl: &mut Tcl, flow: Flow, value: Box<Value>) -> Flow {
     tcl.result = value;
     flow
 }
@@ -412,7 +419,7 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
 
 
 
-fn register(tcl: &mut Tcl, name: &[u8], arity: usize, function: impl Fn(&mut Tcl, &[u8]) -> Flow + 'static) {
+pub fn register(tcl: &mut Tcl, name: &[u8], arity: usize, function: impl Fn(&mut Tcl, &[u8]) -> Flow + 'static) {
     let next = tcl.cmds.take();
     tcl.cmds = Some(Box::new(Cmd {
         name: name.into(),
@@ -436,6 +443,7 @@ fn cmd_subst(tcl: &mut Tcl, args: &[u8]) -> Flow {
     subst(tcl, &s)
 }
 
+#[cfg(any(test, feature = "std"))]
 fn cmd_puts(tcl: &mut Tcl, args: &[u8]) -> Flow {
     let str = list_at(args, 1).unwrap();
     println!("{}", String::from_utf8_lossy(&str));
@@ -543,11 +551,23 @@ fn cmd_math(tcl: &mut Tcl, args: &[u8]) -> Flow {
         b"<=" => (a <= b) as i32,
         b"==" => (a == b) as i32,
         b"!=" => (a != b) as i32,
-        _ => panic!("unknown math operator: {:?}", String::from_utf8_lossy(&opval)),
+        _ => panic!(),
     };
 
-    let p = c.to_string().into_boxed_str().into_boxed_bytes();
-    result(tcl, Flow::Normal, p)
+    let mut text = Vec::new();
+    let negative = c < 0;
+    let mut c = c.abs();
+    loop {
+        text.push((c % 10) as u8 + b'0');
+        c /= 10;
+        if c == 0 { break; }
+    } 
+    if negative {
+        text.push(b'-');
+    }
+    text.reverse();
+
+    result(tcl, Flow::Normal, text.into())
 }
 
 pub fn init() -> Tcl {
@@ -560,6 +580,7 @@ pub fn init() -> Tcl {
     };
 
     register(&mut tcl, b"set", 0, cmd_set);
+    #[cfg(any(test, feature = "std"))]
     register(&mut tcl, b"puts", 2, cmd_puts);
     register(&mut tcl, b"subst", 2, cmd_subst);
     register(&mut tcl, b"proc", 4, cmd_proc);
