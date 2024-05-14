@@ -301,7 +301,7 @@ struct Env {
     parent: Option<Box<Env>>,
 }
 
-type FnDyn = dyn Fn(&mut Tcl, &[Box<Value>]) -> Flow;
+type FnDyn = dyn Fn(&mut Tcl, Vec<Box<Value>>) -> Flow;
 
 struct Cmd {
     name: Box<Value>,
@@ -430,7 +430,7 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
                         if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
                             debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
                             let f = Rc::clone(&c.function);
-                            r = f(tcl, &list);
+                            r = f(tcl, mem::take(&mut list));
                             break;
                         }
 
@@ -441,8 +441,7 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
                         return r;
                     }
                     debug!("normal");
-                    // Reset command list
-                    list.clear();
+                    debug_assert!(list.is_empty());
                 }
             }
         }
@@ -456,7 +455,7 @@ pub fn eval(tcl: &mut Tcl, s: &[u8]) -> Flow {
 
 
 
-pub fn register(tcl: &mut Tcl, name: &[u8], arity: usize, function: impl Fn(&mut Tcl, &[Box<Value>]) -> Flow + 'static) {
+pub fn register(tcl: &mut Tcl, name: &[u8], arity: usize, function: impl Fn(&mut Tcl, Vec<Box<Value>>) -> Flow + 'static) {
     let next = tcl.cmds.take();
     tcl.cmds = Some(Box::new(Cmd {
         name: name.into(),
@@ -467,40 +466,40 @@ pub fn register(tcl: &mut Tcl, name: &[u8], arity: usize, function: impl Fn(&mut
 }
 
 
-fn cmd_set(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
-    let name = args[1].clone();
-    let val = args.get(2).cloned();
+fn cmd_set(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+    let name = mem::take(&mut args[1]);
+    let val = args.get_mut(2).map(mem::take);
 
     let v = var(tcl, name, val);
     result(tcl, Flow::Normal, v)
 }
 
-fn cmd_subst(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+fn cmd_subst(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
     let s = &args[1];
     subst(tcl, s)
 }
 
 #[cfg(any(test, feature = "std"))]
-fn cmd_puts(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
-    let str = &args[1];
-    println!("{}", String::from_utf8_lossy(str));
-    result(tcl, Flow::Normal, str.clone())
+fn cmd_puts(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+    let str = mem::take(&mut args[1]);
+    println!("{}", String::from_utf8_lossy(&str));
+    result(tcl, Flow::Normal, str)
 }
 
-fn cmd_proc(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+    let params = mem::take(&mut args[2]);
+    let body = mem::take(&mut args[3]);
     let name = &args[1];
-    let params = args[2].clone();
-    let body = args[3].clone();
     let mut body = Vec::from(body);
     body.push(b'\n');
     let body = body;
 
-    register(tcl, name, 0, move |tcl, act_args| {
+    register(tcl, name, 0, move |tcl, mut act_args| {
         tcl.env = env_alloc(Some(mem::take(&mut tcl.env)));
 
         for i in 0..list_length(&params) {
             let param = list_at(&params, i).unwrap();
-            let v = act_args.get(i + 1).cloned();
+            let v = act_args.get_mut(i + 1).map(mem::take);
             var(tcl, param, v);
         }
         eval(tcl, &body);
@@ -513,21 +512,21 @@ fn cmd_proc(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
     result(tcl, Flow::Normal, empty())
 }
 
-fn cmd_if(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+fn cmd_if(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
     let n = args.len();
     let mut r = Flow::Normal;
     let mut i = 1;
     while i < n {
-        let cond = &args[i];
-        let branch = args.get(i + 1);
-        let mut cond = Vec::from(cond.clone());
+        let cond = mem::take(&mut args[i]);
+        let branch = args.get_mut(i + 1).map(mem::take);
+        let mut cond = Vec::from(cond);
         cond.push(b'\n');
         r = eval(tcl, &cond);
         if r != Flow::Normal {
             break;
         }
         if int(&tcl.result) != 0 {
-            let mut branch = Vec::from(branch.unwrap().clone());
+            let mut branch = Vec::from(branch.unwrap());
             branch.push(b'\n');
             r = eval(tcl, &branch);
             break;
@@ -538,11 +537,11 @@ fn cmd_if(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
     r
 }
 
-fn cmd_while(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
-    let cond = args[1].clone();
+fn cmd_while(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+    let cond = mem::take(&mut args[1]);
     let mut cond = Vec::from(cond);
     cond.push(b'\n');
-    let body = args[2].clone();
+    let body = mem::take(&mut args[2]);
     let mut body = Vec::from(body);
     body.push(b'\n');
     debug!("while body = {:?}", String::from_utf8_lossy(&body));
@@ -565,7 +564,7 @@ fn cmd_while(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
     }
 }
 
-fn cmd_math(tcl: &mut Tcl, args: &[Box<Value>]) -> Flow {
+fn cmd_math(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
     let opval = &args[0];
     let aval = &args[1];
     let bval = &args[2];
@@ -622,7 +621,7 @@ pub fn init() -> Tcl {
 
     register(&mut tcl, b"break", 1, |_, _| Flow::Break);
     register(&mut tcl, b"continue", 1, |_, _| Flow::Again);
-    register(&mut tcl, b"return", 0, |tcl, args| result(tcl, Flow::Return, args.get(1).cloned().unwrap_or_default()));
+    register(&mut tcl, b"return", 0, |tcl, mut args| result(tcl, Flow::Return, args.get_mut(1).map(mem::take).unwrap_or_default()));
 
     let ops: [&[u8]; 10] = [b"+", b"-", b"*", b"/", b">", b">=", b"<", b"<=", b"==", b"!="];
     for op in ops {
