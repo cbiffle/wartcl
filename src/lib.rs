@@ -54,8 +54,245 @@ use alloc::rc::Rc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+/// Internal macro to make it easier to comment/uncomment a bunch of printlns
+/// all in one place.
 macro_rules! debug {
     ($($x:tt)*) => { /* println!($($x)*) */ };
+}
+
+/// Interpreter state.
+///
+/// To run a program, you need one of these. You can create one using
+/// `init()`, and then call `eval` as many times as required.
+///
+/// Dropping it will deallocate all associated state.
+#[derive(Default)]
+pub struct Tcl {
+    env: Box<Env>,
+    cmds: Option<Box<Cmd>>,
+    pub result: Box<Value>,
+}
+
+/// Creates a new `Tcl` environment and initializes it with the standard bundled
+/// command set before returning it.
+pub fn init() -> Tcl {
+    let env = env_alloc(None);
+
+    let mut tcl = Tcl {
+        env,
+        ..Tcl::default()
+    };
+
+    for &(name, arity, function) in STANDARD_COMMANDS {
+        register(&mut tcl, name, arity, function);
+    }
+
+    tcl
+}
+
+/// Parses `v` as a signed integer. This always succeeds; if `v` is not a valid
+/// signed integer, this returns 0.
+pub fn int(v: &Value) -> i32 {
+    core::str::from_utf8(v)
+        .ok()
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0)
+}
+
+/// Types of tokens that may be produced by the tokenizer.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Token {
+    /// A command has been completed (though it might be empty).
+    Cmd,
+    /// A word has been completed syntactically. Note that a "word" in this case
+    /// may be an arbitrarily complex braced structure, or a subcommand, or a
+    /// quoted string, in addition to the obvious "string of characters without
+    /// whitespace" definition.
+    Word,
+    /// Part of a word has been completed. Multiple parts found next to each
+    /// other should be pasted together.
+    Part,
+    /// Input was invalid.
+    Error,
+}
+
+/// Source code tokenizer state.
+pub struct Tokenizer<'a> {
+    text: &'a Value,
+    quote_mode: bool,
+}
+
+impl<'a> Tokenizer<'a> {
+    /// Creates a new tokenizer to process the input `text`.
+    pub fn new(text: &'a Value) -> Self {
+        Self {
+            text,
+            quote_mode: false,
+        }
+    }
+
+    /// Checks if the tokenizer has no further input. (Note that even if this
+    /// returns `false`, there may not be any _useful_ remaining input, because
+    /// it might be e.g. whitespace.)
+    pub fn at_end(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// Advances the tokenizer and returns the next thing found, or `None` if
+    /// we've exhausted the input.
+    ///
+    /// `skiperr` is normally `false`, which causes tokenization to treat an
+    /// error as the end of input. If `skiperr` is true, any error found will be
+    /// returned, and the tokenizer will be ready to continue past the error to
+    /// the best of its ability.
+    ///
+    /// When input is successfully tokenized, this returns `Some((token,
+    /// text))`, where `token` describes what was found, and `text` contains its
+    /// actual bytes.
+    pub fn next(&mut self, skiperr: bool) -> Option<(Token, &'a Value)> {
+        if self.text.is_empty() {
+            return None;
+        }
+        let (tok, from, to) = next(self.text, &mut self.quote_mode);
+        if !skiperr && tok == Token::Error {
+            return None;
+        }
+        self.text = to;
+        Some((tok, from))
+    }
+}
+
+/// Processes a value as a list, breaking it at (top-level) whitespace into a
+/// vector of element values.
+///
+/// This follows normal Tcl-style list parsing rules, so "a" is a list of one
+/// element, "a b c" is a list of three, and "a {b c}" is a list of two.
+pub fn parse_list(v: &Value) -> Vec<Box<Value>> {
+    let mut words = Vec::new();
+
+    let mut p = Tokenizer::new(v);
+    let mut rest = v;
+    while let Some((tok, from)) = p.next(false) {
+        rest = p.text;
+        if tok == Token::Word {
+            words.push(if from[0] == b'{' {
+                from[1..from.len() - 1].into()
+            } else {
+                from.into()
+            });
+        }
+    }
+    skip_leading_whitespace(&mut rest);
+
+    if !rest.is_empty() {
+        words.push(if rest[0] == b'{' {
+            rest[1..rest.len() - 1].into()
+        } else {
+            rest.into()
+        });
+    }
+
+    words
+}
+
+/// Flow control instructions that can be returned by commands.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum Flow {
+    /// Something has gone wrong, the program is failing.
+    Error,
+    /// The command completed normally and execution should proceed.
+    Normal,
+    /// The command is asking to return from the current scope/procedure.
+    Return,
+    /// The command is asking to terminate the current innermost loop.
+    Break,
+    /// The command is asking to repeat the current innermost loop.
+    Again,
+}
+
+/// Shorthand for storing `value` in `tcl.result` and then returning `flow`.
+pub fn result(tcl: &mut Tcl, flow: Flow, value: Box<Value>) -> Flow {
+    tcl.result = value;
+    flow
+}
+
+/// Evaluates the source code `s` in terms of the interpreter `tcl`.
+///
+/// The result will be deposited in `tcl.result`, and the final control flow
+/// decision returned.
+pub fn eval(tcl: &mut Tcl, s: &Value) -> Flow {
+    debug!("eval({:?})", String::from_utf8_lossy(s));
+    let mut p = Tokenizer::new(s);
+
+    let mut cur = Vec::new();
+    let mut list = Vec::new();
+
+    while let Some((tok, from)) = p.next(true) {
+        match tok {
+            Token::Error => return result(tcl, Flow::Error, Box::new([])),
+
+            Token::Word => {
+                // N.B. result ignored in original
+                subst(tcl, from);
+                cur.push(mem::take(&mut tcl.result));
+                list.push(flatten_string(&cur));
+                cur.clear();
+            }
+
+            Token::Part => {
+                subst(tcl, from);
+                cur.push(mem::take(&mut tcl.result));
+            }
+            Token::Cmd => {
+                let n = list.len();
+                if n == 0 {
+                    debug!("Cmd with zero length list");
+                    result(tcl, Flow::Normal, empty());
+                } else {
+                    debug!("Cmd with proper list");
+                    let cmdname = &*list[0];
+                    debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
+                    let mut cmd = tcl.cmds.as_deref();
+                    let mut r = Flow::Error;
+                    while let Some(c) = cmd.take() {
+                        if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
+                            debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
+                            let f = Rc::clone(&c.function);
+                            r = f(tcl, mem::take(&mut list));
+                            break;
+                        }
+
+                        cmd = c.next.as_deref();
+                    }
+                    if r != Flow::Normal {
+                        debug!("---- oh noes: {r:?}");
+                        return r;
+                    }
+                    debug!("normal");
+                    debug_assert!(list.is_empty());
+                }
+            }
+        }
+    }
+
+    debug!("end eval");
+    Flow::Normal
+}
+
+/// Adds a command to `tcl`, under the name `name`, expecting `arity` arguments
+/// (including its own name!), and implemented by the Rust function `function`.
+///
+/// If a command can handle various numbers of arguments, the `arity` here
+/// should be 0, and the command is responsible for checking argument count
+/// itself.
+pub fn register(tcl: &mut Tcl, name: &Value, arity: usize, function: impl Fn(&mut Tcl, Vec<Box<Value>>) -> Flow + 'static) {
+    let next = tcl.cmds.take();
+    tcl.cmds = Some(Box::new(Cmd {
+        name: name.into(),
+        arity,
+        function: Rc::new(function),
+        next,
+    }));
 }
 
 /// Checks if `c` is a "special" character with syntactic significance. This has
@@ -78,15 +315,6 @@ fn is_end(c: u8) -> bool { b"\n\r;".contains(&c) }
 /// treating a slice of bytes as a value vs just any old bytes.
 type Value = [u8];
 
-/// Parses `v` as a signed integer. This always succeeds; if `v` is not a valid
-/// signed integer, this returns 0.
-pub fn int(v: &Value) -> i32 {
-    core::str::from_utf8(v)
-        .ok()
-        .and_then(|s| s.parse::<i32>().ok())
-        .unwrap_or(0)
-}
-
 /// Produces a newly allocated string value that contains all the elements of
 /// `v` concatenated together, with no intervening bytes. This operation is
 /// useful for pasting strings together during substitution handling.
@@ -102,23 +330,6 @@ fn flatten_string(v: &[Box<Value>]) -> Box<Value> {
 /// Convenience function for getting an empty value.
 fn empty() -> Box<Value> {
     Box::new([])
-}
-
-/// Types of tokens that may be produced by the tokenizer.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Token {
-    /// A command has been completed (though it might be empty).
-    Cmd,
-    /// A word has been completed syntactically. Note that a "word" in this case
-    /// may be an arbitrarily complex braced structure, or a subcommand, or a
-    /// quoted string, in addition to the obvious "string of characters without
-    /// whitespace" definition.
-    Word,
-    /// Part of a word has been completed. Multiple parts found next to each
-    /// other should be pasted together.
-    Part,
-    /// Input was invalid.
-    Error,
 }
 
 /// Updates `s` by stripping off leading (horizontal) whitespace characters.
@@ -233,85 +444,6 @@ fn next<'data>(
     (token, from, to)
 }
 
-/// Source code tokenizer state.
-pub struct Tokenizer<'a> {
-    text: &'a Value,
-    quote_mode: bool,
-}
-
-impl<'a> Tokenizer<'a> {
-    /// Creates a new tokenizer to process the input `text`.
-    pub fn new(text: &'a Value) -> Self {
-        Self {
-            text,
-            quote_mode: false,
-        }
-    }
-
-    /// Checks if the tokenizer has no further input. (Note that even if this
-    /// returns `false`, there may not be any _useful_ remaining input, because
-    /// it might be e.g. whitespace.)
-    pub fn at_end(&self) -> bool {
-        self.text.is_empty()
-    }
-
-    /// Advances the tokenizer and returns the next thing found, or `None` if
-    /// we've exhausted the input.
-    ///
-    /// `skiperr` is normally `false`, which causes tokenization to treat an
-    /// error as the end of input. If `skiperr` is true, any error found will be
-    /// returned, and the tokenizer will be ready to continue past the error to
-    /// the best of its ability.
-    ///
-    /// When input is successfully tokenized, this returns `Some((token,
-    /// text))`, where `token` describes what was found, and `text` contains its
-    /// actual bytes.
-    pub fn next(&mut self, skiperr: bool) -> Option<(Token, &'a Value)> {
-        if self.text.is_empty() {
-            return None;
-        }
-        let (tok, from, to) = next(self.text, &mut self.quote_mode);
-        if !skiperr && tok == Token::Error {
-            return None;
-        }
-        self.text = to;
-        Some((tok, from))
-    }
-}
-
-/// Processes a value as a list, breaking it at (top-level) whitespace into a
-/// vector of element values.
-///
-/// This follows normal Tcl-style list parsing rules, so "a" is a list of one
-/// element, "a b c" is a list of three, and "a {b c}" is a list of two.
-pub fn parse_list(v: &Value) -> Vec<Box<Value>> {
-    let mut words = Vec::new();
-
-    let mut p = Tokenizer::new(v);
-    let mut rest = v;
-    while let Some((tok, from)) = p.next(false) {
-        rest = p.text;
-        if tok == Token::Word {
-            words.push(if from[0] == b'{' {
-                from[1..from.len() - 1].into()
-            } else {
-                from.into()
-            });
-        }
-    }
-    skip_leading_whitespace(&mut rest);
-
-    if !rest.is_empty() {
-        words.push(if rest[0] == b'{' {
-            rest[1..rest.len() - 1].into()
-        } else {
-            rest.into()
-        });
-    }
-
-    words
-}
-
 /// A variable in a scope.
 struct Var {
     /// Name of the variable, used to find it during search.
@@ -383,13 +515,6 @@ fn env_var(env: &mut Env, name: Box<Value>) -> &mut Var {
     env.vars.insert(var)
 }
 
-#[derive(Default)]
-pub struct Tcl {
-    env: Box<Env>,
-    cmds: Option<Box<Cmd>>,
-    pub result: Box<Value>,
-}
-
 /// Looks up a variable named `name` in the current innermost scope, creating it
 /// if it doesn't exist.
 ///
@@ -420,27 +545,6 @@ fn var(tcl: &mut Tcl, name: Box<Value>, value: Option<Box<Value>>) -> Box<Value>
     var.value.clone()
 }
 
-/// Flow control instructions that can be returned by commands.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Flow {
-    /// Something has gone wrong, the program is failing.
-    Error,
-    /// The command completed normally and execution should proceed.
-    Normal,
-    /// The command is asking to return from the current scope/procedure.
-    Return,
-    /// The command is asking to terminate the current innermost loop.
-    Break,
-    /// The command is asking to repeat the current innermost loop.
-    Again,
-}
-
-/// Shorthand for storing `value` in `tcl.result` and then returning `flow`.
-pub fn result(tcl: &mut Tcl, flow: Flow, value: Box<Value>) -> Flow {
-    tcl.result = value;
-    flow
-}
-
 /// Performs a single substitution step on `s`, leaving the result in
 /// `tcl.result`.
 ///
@@ -468,85 +572,6 @@ fn subst(tcl: &mut Tcl, s: &Value) -> Flow {
         }
         _ => result(tcl, Flow::Normal, s.into()),
     }
-}
-
-/// Evaluates the source code `s` in terms of the interpreter `tcl`.
-///
-/// The result will be deposited in `tcl.result`, and the final control flow
-/// decision returned.
-pub fn eval(tcl: &mut Tcl, s: &Value) -> Flow {
-    debug!("eval({:?})", String::from_utf8_lossy(s));
-    let mut p = Tokenizer::new(s);
-
-    let mut cur = Vec::new();
-    let mut list = Vec::new();
-
-    while let Some((tok, from)) = p.next(true) {
-        match tok {
-            Token::Error => return result(tcl, Flow::Error, Box::new([])),
-
-            Token::Word => {
-                // N.B. result ignored in original
-                subst(tcl, from);
-                cur.push(mem::take(&mut tcl.result));
-                list.push(flatten_string(&cur));
-                cur.clear();
-            }
-
-            Token::Part => {
-                subst(tcl, from);
-                cur.push(mem::take(&mut tcl.result));
-            }
-            Token::Cmd => {
-                let n = list.len();
-                if n == 0 {
-                    debug!("Cmd with zero length list");
-                    result(tcl, Flow::Normal, empty());
-                } else {
-                    debug!("Cmd with proper list");
-                    let cmdname = &*list[0];
-                    debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
-                    let mut cmd = tcl.cmds.as_deref();
-                    let mut r = Flow::Error;
-                    while let Some(c) = cmd.take() {
-                        if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
-                            debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
-                            let f = Rc::clone(&c.function);
-                            r = f(tcl, mem::take(&mut list));
-                            break;
-                        }
-
-                        cmd = c.next.as_deref();
-                    }
-                    if r != Flow::Normal {
-                        debug!("---- oh noes: {r:?}");
-                        return r;
-                    }
-                    debug!("normal");
-                    debug_assert!(list.is_empty());
-                }
-            }
-        }
-    }
-
-    debug!("end eval");
-    Flow::Normal
-}
-
-/// Adds a command to `tcl`, under the name `name`, expecting `arity` arguments
-/// (including its own name!), and implemented by the Rust function `function`.
-///
-/// If a command can handle various numbers of arguments, the `arity` here
-/// should be 0, and the command is responsible for checking argument count
-/// itself.
-pub fn register(tcl: &mut Tcl, name: &Value, arity: usize, function: impl Fn(&mut Tcl, Vec<Box<Value>>) -> Flow + 'static) {
-    let next = tcl.cmds.take();
-    tcl.cmds = Some(Box::new(Cmd {
-        name: name.into(),
-        arity,
-        function: Rc::new(function),
-        next,
-    }));
 }
 
 /// Implementation of the `set` standard command.
@@ -728,23 +753,6 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
     (b"==", 3, cmd_math),
     (b"!=", 3, cmd_math),
 ];
-
-/// Creates a new `Tcl` environment and initializes it with the standard bundled
-/// command set before returning it.
-pub fn init() -> Tcl {
-    let env = env_alloc(None);
-
-    let mut tcl = Tcl {
-        env,
-        ..Tcl::default()
-    };
-
-    for &(name, arity, function) in STANDARD_COMMANDS {
-        register(&mut tcl, name, arity, function);
-    }
-
-    tcl
-}
 
 #[cfg(test)]
 mod test;
