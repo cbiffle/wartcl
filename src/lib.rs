@@ -605,7 +605,7 @@ mod test {
     }
 
     #[test]
-    fn lexer_tests() {
+    fn test_0_lexer() {
         // So, the original lexer inherently relies on the ability to read past
         // the end of the strings it's passed. It will find a 0 there if the
         // string is separately allocated, or a different "end" character if
@@ -779,7 +779,7 @@ mod test {
     }
 
     #[test]
-    fn test_subst() {
+    fn test_1_subst() {
         // N.B. for these commands, the test framework will append the
         // terminating character to make the damn lexer happy.
 
@@ -830,7 +830,7 @@ mod test {
     }
 
     #[test]
-    fn test_flow() {
+    fn test_2_flow() {
         check_eval(None, b"if {< 1 2} {puts A} {puts B}", b"A");
         check_eval(None, b"if {> 1 2} {puts A} {puts B}", b"B");
         check_eval(None, b"if {> 1 2} {puts A}", b"0");
@@ -888,7 +888,7 @@ mod test {
     }
     
     #[test]
-    fn test_math() {
+    fn test_3_math() {
         check_eval(None, b"< 1 2", b"1");
         check_eval(None, b"< 1 1", b"0");
         check_eval(None, b"<= 1 1", b"1");
