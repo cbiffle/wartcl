@@ -68,7 +68,7 @@ macro_rules! debug {
 /// Dropping it will deallocate all associated state.
 #[derive(Default)]
 pub struct Tcl {
-    env: Box<Env>,
+    env: Box<Scope>,
     cmds: Option<Box<Cmd>>,
 }
 
@@ -76,7 +76,7 @@ impl Tcl {
     /// Creates a new `Tcl` environment and initializes it with the standard
     /// bundled command set before returning it.
     pub fn init() -> Self {
-        let env = Env::alloc(None);
+        let env = Scope::alloc(None);
 
         let mut tcl = Self {
             env,
@@ -539,7 +539,7 @@ struct Var {
 
 /// A scope, either global or procedural.
 #[derive(Default)]
-struct Env {
+struct Scope {
     /// Chain of variables defined in this scope, or `None` if there aren't any.
     vars: Option<Box<Var>>,
     /// Next outer scope. Note that this is _not_ a lexical parent --- variable
@@ -547,13 +547,13 @@ struct Env {
     /// current if this scope returns.
     ///
     /// In the outermost global scope, this is `None`.
-    parent: Option<Box<Env>>,
+    parent: Option<Box<Scope>>,
 }
 
-impl Env {
+impl Scope {
     /// Creates a new empty scope, with the given parent.
-    fn alloc(parent: Option<Box<Env>>) -> Box<Env> {
-        Box::new(Env {
+    fn alloc(parent: Option<Box<Scope>>) -> Box<Scope> {
+        Box::new(Scope {
             vars: None,
             parent,
         })
@@ -644,7 +644,7 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<OwnedValue>) -> Result<OwnedValue, Flow
     let parsed_params = parse_list(&params);
 
     tcl.register(name, 0, move |tcl, mut act_args| {
-        tcl.env = Env::alloc(Some(mem::take(&mut tcl.env)));
+        tcl.env = Scope::alloc(Some(mem::take(&mut tcl.env)));
 
         for (i, param) in parsed_params.iter().enumerate() {
             let v = mem::take(act_args.get_mut(i + 1).ok_or(FlowChange::Error)?);
