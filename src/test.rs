@@ -208,7 +208,7 @@ fn check_eval(tcl: Option<&mut Tcl>, s: &[u8], expected: &[u8]) {
         local.insert(Tcl::init())
     };
 
-    if tcl.eval(s) == Flow::Error {
+    if tcl.eval(s) == Err(FlowChange::Error) {
         panic!("eval returned error: {:?}, ({:?})",
             String::from_utf8_lossy(&tcl.result),
             String::from_utf8_lossy(s));

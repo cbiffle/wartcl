@@ -98,7 +98,7 @@ impl Tcl {
     /// If a command can handle various numbers of arguments, the `arity` here
     /// should be 0, and the command is responsible for checking argument count
     /// itself.
-    pub fn register(&mut self, name: &Value, arity: usize, function: impl Fn(&mut Tcl, Vec<Box<Value>>) -> Flow + 'static) {
+    pub fn register(&mut self, name: &Value, arity: usize, function: impl Fn(&mut Tcl, Vec<Box<Value>>) -> Result<(), FlowChange> + 'static) {
         let next = self.cmds.take();
         self.cmds = Some(Box::new(Cmd {
             name: name.into(),
@@ -112,7 +112,7 @@ impl Tcl {
     ///
     /// The result will be deposited in `tcl.result`, and the final control flow
     /// decision returned.
-    pub fn eval(&mut self, s: &Value) -> Flow {
+    pub fn eval(&mut self, s: &Value) -> Result<(), FlowChange> {
         debug!("eval({:?})", String::from_utf8_lossy(s));
         let mut p = Tokenizer::new(s);
 
@@ -121,7 +121,9 @@ impl Tcl {
 
         while let Some((tok, from)) = p.next(true) {
             match tok {
-                Token::Error => return self.set_result(Flow::Error, Box::new([])),
+                Token::Error => {
+                    return self.set_result_err(FlowChange::Error, empty());
+                }
 
                 Token::Word => {
                     // N.B. result ignored in original
@@ -139,26 +141,22 @@ impl Tcl {
                     let n = list.len();
                     if n == 0 {
                         debug!("Cmd with zero length list");
-                        self.set_result(Flow::Normal, empty());
+                        self.result = empty();
                     } else {
                         debug!("Cmd with proper list");
                         let cmdname = &*list[0];
                         debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
                         let mut cmd = self.cmds.as_deref();
-                        let mut r = Flow::Error;
+
                         while let Some(c) = cmd.take() {
                             if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
                                 debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
                                 let f = Rc::clone(&c.function);
-                                r = f(self, mem::take(&mut list));
+                                f(self, mem::take(&mut list))?;
                                 break;
                             }
 
                             cmd = c.next.as_deref();
-                        }
-                        if r != Flow::Normal {
-                            debug!("---- oh noes: {r:?}");
-                            return r;
                         }
                         debug!("normal");
                         debug_assert!(list.is_empty());
@@ -168,13 +166,25 @@ impl Tcl {
         }
 
         debug!("end eval");
-        Flow::Normal
+        Ok(())
+    }
+
+    pub fn clear_result(&mut self) {
+        if !self.result.is_empty() {
+            self.result = empty();
+        }
     }
 
     /// Shorthand for storing `value` in `tcl.result` and then returning `flow`.
-    pub fn set_result(&mut self, flow: Flow, value: Box<Value>) -> Flow {
+    pub fn set_result_ok(&mut self, value: Box<Value>) -> Result<(), FlowChange> {
         self.result = value;
-        flow
+        Ok(())
+    }
+
+    /// Shorthand for storing `value` in `tcl.result` and then returning `Err(flow)`.
+    pub fn set_result_err<T>(&mut self, flow: FlowChange, value: Box<Value>) -> Result<T, FlowChange> {
+        self.result = value;
+        Err(flow)
     }
 
     /// Looks up a variable named `name` in the current innermost scope,
@@ -213,12 +223,12 @@ impl Tcl {
     /// Substitution steps include peeling the outer curly braces off a braced
     /// string, evaluating a square-bracketed subcommand, or processing a
     /// dollar-sign variable splice.
-    fn subst(&mut self, s: &Value) -> Flow {
+    fn subst(&mut self, s: &Value) -> Result<(), FlowChange> {
         match s.split_first() {
-            None => self.set_result(Flow::Normal, Box::new([])),
-            Some((b'{', b"")) => self.set_result(Flow::Error, Box::new([])),
+            None => self.set_result_ok(empty()),
+            Some((b'{', b"")) => self.set_result_err(FlowChange::Error, empty()),
             Some((b'{', rest)) => {
-                self.set_result(Flow::Normal, rest[..rest.len() - 1].into())
+                self.set_result_ok(rest[..rest.len() - 1].into())
             }
             Some((b'$', name)) => {
                 let mut subcmd = b"set ".to_vec();
@@ -231,10 +241,9 @@ impl Tcl {
                 let rest = add_newline(&rest[..rest.len() - 1]);
                 self.eval(&rest)
             }
-            _ => self.set_result(Flow::Normal, s.into()),
+            _ => self.set_result_ok(s.into()),
         }
     }
-
 }
 
 fn add_newline(v: impl Into<Vec<u8>>) -> Box<Value> {
@@ -364,13 +373,12 @@ pub fn parse_list(v: &Value) -> Vec<Box<Value>> {
     words
 }
 
-/// Flow control instructions that can be returned by commands.
+/// Flow control instructions that can be returned by commands, in place of
+/// normal completion.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Flow {
+pub enum FlowChange {
     /// Something has gone wrong, the program is failing.
-    Error,
-    /// The command completed normally and execution should proceed.
-    Normal,
+    Error = 1,
     /// The command is asking to return from the current scope/procedure.
     Return,
     /// The command is asking to terminate the current innermost loop.
@@ -579,7 +587,7 @@ impl Env {
 }
 
 /// Shorthand for the type of our boxed command closures.
-type FnDyn = dyn Fn(&mut Tcl, Vec<Box<Value>>) -> Flow;
+type FnDyn = dyn Fn(&mut Tcl, Vec<Box<Value>>) -> Result<(), FlowChange>;
 
 /// A command record. Each command that is registered gets one of these,
 /// assembled into a chain.
@@ -602,37 +610,37 @@ struct Cmd {
 }
 
 /// Implementation of the `set` standard command.
-fn cmd_set(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+fn cmd_set(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Result<(), FlowChange> {
     let name = mem::take(&mut args[1]);
     let val = args.get_mut(2).map(mem::take);
 
     let v = tcl.var(name, val);
-    tcl.set_result(Flow::Normal, v)
+    tcl.set_result_ok(v)
 }
 
 /// Implementation of the `subst` standard command.
-fn cmd_subst(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
+fn cmd_subst(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Result<(), FlowChange> {
     let s = &args[1];
     tcl.subst(s)
 }
 
-fn cmd_incr(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+fn cmd_incr(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Result<(), FlowChange> {
     let name = mem::take(&mut args[1]);
     let v = tcl.var(name.clone(), None);
     let r = tcl.var(name, Some(int_value(int(&v) + 1)));
-    tcl.set_result(Flow::Normal, r)
+    tcl.set_result_ok(r)
 }
 
 /// Implementation of the `puts` standard command.
 #[cfg(any(test, feature = "std"))]
-fn cmd_puts(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+fn cmd_puts(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Result<(), FlowChange> {
     let str = mem::take(&mut args[1]);
     println!("{}", String::from_utf8_lossy(&str));
-    tcl.set_result(Flow::Normal, str)
+    tcl.set_result_ok(str)
 }
 
 /// Implementation of the `proc` standard command.
-fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Result<(), FlowChange> {
     let body = mem::take(&mut args[3]);
     let params = mem::take(&mut args[2]);
     let name = &args[1];
@@ -647,14 +655,14 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
             let v = act_args.get_mut(i + 1).map(mem::take);
             tcl.var(param.clone(), v);
         }
-        tcl.eval(&body);
+        let r = tcl.eval(&body);
 
         let parent_env = tcl.env.parent.take().unwrap();
         tcl.env = parent_env;
 
-        Flow::Normal
+        r
     });
-    tcl.set_result(Flow::Normal, empty())
+    tcl.set_result_ok(empty())
 }
 
 /// Implementation of the `if` standard command.
@@ -663,26 +671,22 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
 /// `if {condition} {body} else {body2}`
 /// `if {condition} {body} elseif {condition2} {body2} ...`
 /// `if {condition} {body} elseif {condition2} {body2} ... else {body3}`
-fn cmd_if(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+fn cmd_if(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Result<(), FlowChange> {
     // Skip the first argument.
     let mut i = 1;
-
-    // Prepare our result to return Error if the if is missing its condition.
-    let mut r = Flow::Error;
 
     // We always arrive at the top of this loop while expecting a condition,
     // either just after the initial "if", or after an "elseif".
     while i < args.len() {
         let cond = add_newline(mem::take(&mut args[i]));
-        r = tcl.eval(&cond);
-        if r != Flow::Normal { break; }
+        tcl.eval(&cond)?;
 
         let cond = int(&tcl.result) != 0;
 
         if cond {
             let branch = mem::take(&mut args[i + 1]);
             let branch = add_newline(branch);
-            r = tcl.eval(&branch);
+            tcl.eval(&branch)?;
             break;
         }
 
@@ -692,51 +696,48 @@ fn cmd_if(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
             match &**next {
                 b"else" => {
                     let branch = add_newline(mem::take(&mut args[i + 1]));
-                    r = tcl.eval(&branch);
-                    break;
+                    return tcl.eval(&branch);
                 }
                 b"elseif" => {
                     // Prime the result to return error if elseif is the last
                     // token.
-                    r = Flow::Error;
+                    if i + 1 == args.len() {
+                        return Err(FlowChange::Error);
+                    }
                     i += 1;
                 }
-                _ => return Flow::Error,
+                _ => return Err(FlowChange::Error),
             }
         }
     }
-    r
+    Ok(())
 }
 
 /// Implementation of the `while` standard command.
-fn cmd_while(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+fn cmd_while(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Result<(), FlowChange> {
     let body = add_newline(mem::take(&mut args[2]));
 
     let cond = add_newline(mem::take(&mut args[1]));
 
     debug!("while body = {:?}", String::from_utf8_lossy(&body));
     loop {
-        let r = tcl.eval(&cond);
-        if r != Flow::Normal {
-            return r;
-        }
+        tcl.eval(&cond)?;
         if int(&tcl.result) == 0 {
-            return Flow::Normal;
+            return Ok(());
         }
         let r = tcl.eval(&body);
         match r {
-            Flow::Again | Flow::Normal => (),
+            Err(FlowChange::Again) | Ok(_) => (),
 
-            Flow::Break => return Flow::Normal,
-            Flow::Return => return Flow::Return,
-            Flow::Error => return Flow::Error,
+            Err(FlowChange::Break) => return Ok(()),
+            Err(e) => return Err(e),
         }
     }
 }
 
 /// Implementation of the standard math commands; parses its first argument to
 /// choose the operation.
-fn cmd_math(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
+fn cmd_math(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Result<(), FlowChange> {
     let bval = &args[2];
     let aval = &args[1];
     let opval = &args[0];
@@ -758,12 +759,12 @@ fn cmd_math(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
         _ => panic!(),
     };
 
-    tcl.set_result(Flow::Normal, int_value(c))
+    tcl.set_result_ok(int_value(c))
 }
 
 /// Type of a command implemented with a stateless function pointer, as opposed
 /// to a general closure.
-type StaticCmd = fn(&mut Tcl, Vec<Box<Value>>) -> Flow;
+type StaticCmd = fn(&mut Tcl, Vec<Box<Value>>) -> Result<(), FlowChange>;
 
 static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
     (b"set", 0, cmd_set),
@@ -773,11 +774,11 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
     (b"proc", 4, cmd_proc),
     (b"if", 0, cmd_if),
     (b"while", 3, cmd_while),
-    (b"break", 1, |_, _| Flow::Break),
-    (b"continue", 1, |_, _| Flow::Again),
+    (b"break", 1, |_, _| Err(FlowChange::Break)),
+    (b"continue", 1, |_, _| Err(FlowChange::Again)),
     (b"return", 0, |tcl, mut args| {
-        tcl.set_result(
-            Flow::Return,
+        tcl.set_result_err(
+            FlowChange::Return,
             args.get_mut(1).map(mem::take).unwrap_or_default(),
         )
     }),
