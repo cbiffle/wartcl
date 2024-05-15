@@ -21,7 +21,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         buf.push(inp);
 
-        let mut p = Parser::new(&buf);
+        let mut p = Tokenizer::new(&buf);
 
         while let Some((tok, from)) = p.next(true) {
             if tok == Token::Error && !p.at_end() {

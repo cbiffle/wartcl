@@ -2,7 +2,7 @@ use super::*;
 
 #[track_caller]
 fn check_tokens(input: &[u8], expect: &[(Token, &[u8])]) {
-    let mut p = Parser::new(input);
+    let mut p = Tokenizer::new(input);
     let expect_count = expect.len();
     let mut expect = expect.iter().enumerate();
     let mut found = 0;
