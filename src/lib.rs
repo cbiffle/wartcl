@@ -247,6 +247,22 @@ pub fn int(v: &Value) -> i32 {
         .unwrap_or(0)
 }
 
+pub fn int_value(x: i32) -> Box<Value> {
+    let mut text = Vec::new();
+    let negative = x < 0;
+    let mut c = x.abs();
+    loop {
+        text.push((c % 10) as u8 + b'0');
+        c /= 10;
+        if c == 0 { break; }
+    } 
+    if negative {
+        text.push(b'-');
+    }
+    text.reverse();
+    text.into()
+}
+
 /// Types of tokens that may be produced by the tokenizer.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum Token {
@@ -595,6 +611,13 @@ fn cmd_subst(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
     tcl.subst(s)
 }
 
+fn cmd_incr(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
+    let name = mem::take(&mut args[1]);
+    let v = tcl.var(name.clone(), None);
+    let r = tcl.var(name, Some(int_value(int(&v) + 1)));
+    tcl.set_result(Flow::Normal, r)
+}
+
 /// Implementation of the `puts` standard command.
 #[cfg(any(test, feature = "std"))]
 fn cmd_puts(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
@@ -711,20 +734,7 @@ fn cmd_math(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
         _ => panic!(),
     };
 
-    let mut text = Vec::new();
-    let negative = c < 0;
-    let mut c = c.abs();
-    loop {
-        text.push((c % 10) as u8 + b'0');
-        c /= 10;
-        if c == 0 { break; }
-    } 
-    if negative {
-        text.push(b'-');
-    }
-    text.reverse();
-
-    tcl.set_result(Flow::Normal, text.into())
+    tcl.set_result(Flow::Normal, int_value(c))
 }
 
 /// Type of a command implemented with a stateless function pointer, as opposed
@@ -747,6 +757,7 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
             args.get_mut(1).map(mem::take).unwrap_or_default(),
         )
     }),
+    //(b"incr", 2, cmd_incr),
     (b"+", 3, cmd_math),
     (b"-", 3, cmd_math),
     (b"*", 3, cmd_math),
