@@ -68,7 +68,7 @@ macro_rules! debug {
 /// Dropping it will deallocate all associated state.
 #[derive(Default)]
 pub struct Env {
-    env: Box<Scope>,
+    env: Scope,
     cmds: Option<Box<Cmd>>,
 }
 
@@ -76,12 +76,7 @@ impl Env {
     /// Creates a new `Tcl` environment and initializes it with the standard
     /// bundled command set before returning it.
     pub fn init() -> Self {
-        let env = Scope::alloc(None);
-
-        let mut tcl = Self {
-            env,
-            ..Self::default()
-        };
+        let mut tcl = Self::default();
 
         for &(name, arity, function) in STANDARD_COMMANDS {
             tcl.register(name, arity, function);
@@ -576,18 +571,13 @@ struct Scope {
     /// current if this scope returns.
     ///
     /// In the outermost global scope, this is `None`.
+    ///
+    /// If `proc` support is disabled, this is implicitly always `None`.
+    #[cfg(feature = "proc")]
     parent: Option<Box<Scope>>,
 }
 
 impl Scope {
-    /// Creates a new empty scope, with the given parent.
-    fn alloc(parent: Option<Box<Scope>>) -> Box<Scope> {
-        Box::new(Scope {
-            vars: None,
-            parent,
-        })
-    }
-
     /// Creates a new `Var` with the given `name` and attaches it at the front
     /// of `env`'s var chain.
     ///
@@ -675,7 +665,8 @@ fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowCh
     let parsed_params = parse_list(&params);
 
     tcl.register(name, 0, move |tcl, act_args| {
-        tcl.env = Scope::alloc(Some(mem::take(&mut tcl.env)));
+        let boxed_scope = Box::new(mem::take(&mut tcl.env));
+        tcl.env.parent = Some(boxed_scope);
 
         for (i, param) in parsed_params.iter().enumerate() {
             let v = mem::take(act_args.get_mut(i + 1).ok_or(FlowChange::Error)?);
@@ -683,8 +674,7 @@ fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowCh
         }
         let r = tcl.eval(&body);
 
-        let parent_env = tcl.env.parent.take().unwrap();
-        tcl.env = parent_env;
+        tcl.env = *tcl.env.parent.take().unwrap();
 
         match r {
             Err(FlowChange::Return(v)) | Ok(v) => Ok(v),
