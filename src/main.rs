@@ -3,7 +3,7 @@ use std::{error::Error, io::{ErrorKind, Read}};
 use wartcl::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut tcl = init();
+    let mut tcl = Tcl::init();
 
     let mut stdin = std::io::stdin();
     let mut buf = vec![];
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             if tok == Token::Cmd && !from.is_empty() {
-                let r = eval(&mut tcl, &buf);
+                let r = tcl.eval(&buf);
                 if r != Flow::Error {
                     println!("{r:?}> {}", String::from_utf8_lossy(&tcl.result));
                 } else {

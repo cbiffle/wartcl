@@ -73,21 +73,169 @@ pub struct Tcl {
     pub result: Box<Value>,
 }
 
-/// Creates a new `Tcl` environment and initializes it with the standard bundled
-/// command set before returning it.
-pub fn init() -> Tcl {
-    let env = env_alloc(None);
-
-    let mut tcl = Tcl {
-        env,
-        ..Tcl::default()
-    };
-
-    for &(name, arity, function) in STANDARD_COMMANDS {
-        register(&mut tcl, name, arity, function);
+impl Tcl {
+    /// Creates a new `Tcl` environment and initializes it with the standard
+    /// bundled command set before returning it.
+    pub fn init() -> Self {
+        let env = Env::alloc(None);
+    
+        let mut tcl = Self {
+            env,
+            ..Self::default()
+        };
+    
+        for &(name, arity, function) in STANDARD_COMMANDS {
+            tcl.register(name, arity, function);
+        }
+    
+        tcl
     }
 
-    tcl
+    /// Adds a command to `tcl`, under the name `name`, expecting `arity`
+    /// arguments (including its own name!), and implemented by the Rust
+    /// function `function`.
+    ///
+    /// If a command can handle various numbers of arguments, the `arity` here
+    /// should be 0, and the command is responsible for checking argument count
+    /// itself.
+    pub fn register(&mut self, name: &Value, arity: usize, function: impl Fn(&mut Tcl, Vec<Box<Value>>) -> Flow + 'static) {
+        let next = self.cmds.take();
+        self.cmds = Some(Box::new(Cmd {
+            name: name.into(),
+            arity,
+            function: Rc::new(function),
+            next,
+        }));
+    }
+
+    /// Evaluates the source code `s` in terms of the interpreter `tcl`.
+    ///
+    /// The result will be deposited in `tcl.result`, and the final control flow
+    /// decision returned.
+    pub fn eval(&mut self, s: &Value) -> Flow {
+        debug!("eval({:?})", String::from_utf8_lossy(s));
+        let mut p = Tokenizer::new(s);
+    
+        let mut cur = Vec::new();
+        let mut list = Vec::new();
+    
+        while let Some((tok, from)) = p.next(true) {
+            match tok {
+                Token::Error => return self.set_result(Flow::Error, Box::new([])),
+    
+                Token::Word => {
+                    // N.B. result ignored in original
+                    self.subst(from);
+                    cur.push(mem::take(&mut self.result));
+                    list.push(flatten_string(&cur));
+                    cur.clear();
+                }
+    
+                Token::Part => {
+                    self.subst(from);
+                    cur.push(mem::take(&mut self.result));
+                }
+                Token::Cmd => {
+                    let n = list.len();
+                    if n == 0 {
+                        debug!("Cmd with zero length list");
+                        self.set_result(Flow::Normal, empty());
+                    } else {
+                        debug!("Cmd with proper list");
+                        let cmdname = &*list[0];
+                        debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
+                        let mut cmd = self.cmds.as_deref();
+                        let mut r = Flow::Error;
+                        while let Some(c) = cmd.take() {
+                            if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
+                                debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
+                                let f = Rc::clone(&c.function);
+                                r = f(self, mem::take(&mut list));
+                                break;
+                            }
+    
+                            cmd = c.next.as_deref();
+                        }
+                        if r != Flow::Normal {
+                            debug!("---- oh noes: {r:?}");
+                            return r;
+                        }
+                        debug!("normal");
+                        debug_assert!(list.is_empty());
+                    }
+                }
+            }
+        }
+    
+        debug!("end eval");
+        Flow::Normal
+    }
+
+    /// Shorthand for storing `value` in `tcl.result` and then returning `flow`.
+    pub fn set_result(&mut self, flow: Flow, value: Box<Value>) -> Flow {
+        self.result = value;
+        flow
+    }
+
+    /// Looks up a variable named `name` in the current innermost scope,
+    /// creating it if it doesn't exist.
+    ///
+    /// If `value` is `Some(v)`, the variable's contents will be set to `v`. If
+    /// a variable is newly created but `value` is `None`, the variable will
+    /// default to the empty string.
+    ///
+    /// Returns a copy of the variable's contents. (TODO: ideally this would not
+    /// imply an automatic copy.)
+    fn var(&mut self, name: Box<Value>, value: Option<Box<Value>>) -> Box<Value> {
+        let mut var = self.env.vars.as_mut();
+        while let Some(v) = var.take() {
+            if v.name == name {
+                var = Some(v);
+                break;
+            }
+            var = v.next.as_mut();
+        }
+        let var = match var {
+            Some(v) => v,
+            None => self.env.add_var(name),
+        };
+    
+        if let Some(value) = value {
+            var.value = value;
+        }
+    
+        var.value.clone()
+    }
+
+    /// Performs a single substitution step on `s`, leaving the result in
+    /// `tcl.result`.
+    ///
+    /// Substitution steps include peeling the outer curly braces off a braced
+    /// string, evaluating a square-bracketed subcommand, or processing a
+    /// dollar-sign variable splice.
+    fn subst(&mut self, s: &Value) -> Flow {
+        match s.split_first() {
+            None => self.set_result(Flow::Normal, Box::new([])),
+            Some((b'{', b"")) => self.set_result(Flow::Error, Box::new([])),
+            Some((b'{', rest)) => {
+                self.set_result(Flow::Normal, rest[..rest.len() - 1].into())
+            }
+            Some((b'$', name)) => {
+                let mut subcmd = b"set ".to_vec();
+                subcmd.extend_from_slice(name);
+                subcmd.push(b'\n');
+                self.eval(&subcmd)
+            }
+            Some((b'[', rest)) => {
+                // ugh TODO
+                let mut rest = rest[..rest.len() - 1].to_vec();
+                rest.push(b'\n');
+                self.eval(&rest)
+            }
+            _ => self.set_result(Flow::Normal, s.into()),
+        }
+    }
+
 }
 
 /// Parses `v` as a signed integer. This always succeeds; if `v` is not a valid
@@ -208,91 +356,6 @@ pub enum Flow {
     Break,
     /// The command is asking to repeat the current innermost loop.
     Again,
-}
-
-/// Shorthand for storing `value` in `tcl.result` and then returning `flow`.
-pub fn result(tcl: &mut Tcl, flow: Flow, value: Box<Value>) -> Flow {
-    tcl.result = value;
-    flow
-}
-
-/// Evaluates the source code `s` in terms of the interpreter `tcl`.
-///
-/// The result will be deposited in `tcl.result`, and the final control flow
-/// decision returned.
-pub fn eval(tcl: &mut Tcl, s: &Value) -> Flow {
-    debug!("eval({:?})", String::from_utf8_lossy(s));
-    let mut p = Tokenizer::new(s);
-
-    let mut cur = Vec::new();
-    let mut list = Vec::new();
-
-    while let Some((tok, from)) = p.next(true) {
-        match tok {
-            Token::Error => return result(tcl, Flow::Error, Box::new([])),
-
-            Token::Word => {
-                // N.B. result ignored in original
-                subst(tcl, from);
-                cur.push(mem::take(&mut tcl.result));
-                list.push(flatten_string(&cur));
-                cur.clear();
-            }
-
-            Token::Part => {
-                subst(tcl, from);
-                cur.push(mem::take(&mut tcl.result));
-            }
-            Token::Cmd => {
-                let n = list.len();
-                if n == 0 {
-                    debug!("Cmd with zero length list");
-                    result(tcl, Flow::Normal, empty());
-                } else {
-                    debug!("Cmd with proper list");
-                    let cmdname = &*list[0];
-                    debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
-                    let mut cmd = tcl.cmds.as_deref();
-                    let mut r = Flow::Error;
-                    while let Some(c) = cmd.take() {
-                        if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
-                            debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
-                            let f = Rc::clone(&c.function);
-                            r = f(tcl, mem::take(&mut list));
-                            break;
-                        }
-
-                        cmd = c.next.as_deref();
-                    }
-                    if r != Flow::Normal {
-                        debug!("---- oh noes: {r:?}");
-                        return r;
-                    }
-                    debug!("normal");
-                    debug_assert!(list.is_empty());
-                }
-            }
-        }
-    }
-
-    debug!("end eval");
-    Flow::Normal
-}
-
-/// Adds a command to `tcl`, under the name `name`, expecting `arity` arguments
-/// (including its own name!), and implemented by the Rust function `function`.
-///
-/// If a command can handle various numbers of arguments, the `arity` here
-/// should be 0, and the command is responsible for checking argument count
-/// itself.
-pub fn register(tcl: &mut Tcl, name: &Value, arity: usize, function: impl Fn(&mut Tcl, Vec<Box<Value>>) -> Flow + 'static) {
-    let next = tcl.cmds.take();
-    tcl.cmds = Some(Box::new(Cmd {
-        name: name.into(),
-        arity,
-        function: Rc::new(function),
-        next,
-    }));
 }
 
 /// Checks if `c` is a "special" character with syntactic significance. This has
@@ -468,6 +531,32 @@ struct Env {
     parent: Option<Box<Env>>,
 }
 
+impl Env {
+    /// Creates a new empty scope, with the given parent.
+    fn alloc(parent: Option<Box<Env>>) -> Box<Env> {
+        Box::new(Env {
+            vars: None,
+            parent,
+        })
+    }
+
+    /// Creates a new `Var` with the given `name` and attaches it at the front
+    /// of `env`'s var chain.
+    ///
+    /// This operation is unconditional. If there's already a `Var` named `name`
+    /// in `env`, the new one will shadow it. (You almost never want that.)
+    ///
+    /// Returns a reference to the newly created `Var` so it can be filled in.
+    fn add_var(&mut self, name: Box<Value>) -> &mut Var {
+        let var = Box::new(Var {
+            name,
+            value: Box::new([]),
+            next: self.vars.take(),
+        });
+        self.vars.insert(var)
+    }
+}
+
 /// Shorthand for the type of our boxed command closures.
 type FnDyn = dyn Fn(&mut Tcl, Vec<Box<Value>>) -> Flow;
 
@@ -491,102 +580,19 @@ struct Cmd {
     next: Option<Box<Cmd>>,
 }
 
-/// Creates a new empty scope, with the given parent.
-fn env_alloc(parent: Option<Box<Env>>) -> Box<Env> {
-    Box::new(Env {
-        vars: None,
-        parent,
-    })
-}
-
-/// Creates a new `Var` with the given `name` and attaches it at the front of
-/// `env`'s var chain.
-///
-/// This operation is unconditional. If there's already a `Var` named `name` in
-/// `env`, the new one will shadow it. (You almost never want that.)
-///
-/// Returns a reference to the newly created `Var` so it can be filled in.
-fn env_var(env: &mut Env, name: Box<Value>) -> &mut Var {
-    let var = Box::new(Var {
-        name,
-        value: Box::new([]),
-        next: env.vars.take(),
-    });
-    env.vars.insert(var)
-}
-
-/// Looks up a variable named `name` in the current innermost scope, creating it
-/// if it doesn't exist.
-///
-/// If `value` is `Some(v)`, the variable's contents will be set to `v`. If a
-/// variable is newly created but `value` is `None`, the variable will default
-/// to the empty string.
-///
-/// Returns a copy of the variable's contents. (TODO: ideally this would not
-/// imply an automatic copy.)
-fn var(tcl: &mut Tcl, name: Box<Value>, value: Option<Box<Value>>) -> Box<Value> {
-    let mut var = tcl.env.vars.as_mut();
-    while let Some(v) = var.take() {
-        if v.name == name {
-            var = Some(v);
-            break;
-        }
-        var = v.next.as_mut();
-    }
-    let var = match var {
-        Some(v) => v,
-        None => env_var(&mut tcl.env, name),
-    };
-
-    if let Some(value) = value {
-        var.value = value;
-    }
-
-    var.value.clone()
-}
-
-/// Performs a single substitution step on `s`, leaving the result in
-/// `tcl.result`.
-///
-/// Substitution steps include peeling the outer curly braces off a braced
-/// string, evaluating a square-bracketed subcommand, or processing a
-/// dollar-sign variable splice.
-fn subst(tcl: &mut Tcl, s: &Value) -> Flow {
-    match s.split_first() {
-        None => result(tcl, Flow::Normal, Box::new([])),
-        Some((b'{', b"")) => result(tcl, Flow::Error, Box::new([])),
-        Some((b'{', rest)) => {
-            result(tcl, Flow::Normal, rest[..rest.len() - 1].into())
-        }
-        Some((b'$', name)) => {
-            let mut subcmd = b"set ".to_vec();
-            subcmd.extend_from_slice(name);
-            subcmd.push(b'\n');
-            eval(tcl, &subcmd)
-        }
-        Some((b'[', rest)) => {
-            // ugh TODO
-            let mut rest = rest[..rest.len() - 1].to_vec();
-            rest.push(b'\n');
-            eval(tcl, &rest)
-        }
-        _ => result(tcl, Flow::Normal, s.into()),
-    }
-}
-
 /// Implementation of the `set` standard command.
 fn cmd_set(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
     let name = mem::take(&mut args[1]);
     let val = args.get_mut(2).map(mem::take);
 
-    let v = var(tcl, name, val);
-    result(tcl, Flow::Normal, v)
+    let v = tcl.var(name, val);
+    tcl.set_result(Flow::Normal, v)
 }
 
 /// Implementation of the `subst` standard command.
 fn cmd_subst(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
     let s = &args[1];
-    subst(tcl, s)
+    tcl.subst(s)
 }
 
 /// Implementation of the `puts` standard command.
@@ -594,7 +600,7 @@ fn cmd_subst(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
 fn cmd_puts(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
     let str = mem::take(&mut args[1]);
     println!("{}", String::from_utf8_lossy(&str));
-    result(tcl, Flow::Normal, str)
+    tcl.set_result(Flow::Normal, str)
 }
 
 /// Implementation of the `proc` standard command.
@@ -608,21 +614,21 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
 
     let parsed_params = parse_list(&params);
 
-    register(tcl, name, 0, move |tcl, mut act_args| {
-        tcl.env = env_alloc(Some(mem::take(&mut tcl.env)));
+    tcl.register(name, 0, move |tcl, mut act_args| {
+        tcl.env = Env::alloc(Some(mem::take(&mut tcl.env)));
 
         for (i, param) in parsed_params.iter().enumerate() {
             let v = act_args.get_mut(i + 1).map(mem::take);
-            var(tcl, param.clone(), v);
+            tcl.var(param.clone(), v);
         }
-        eval(tcl, &body);
+        tcl.eval(&body);
 
         let parent_env = tcl.env.parent.take().unwrap();
         tcl.env = parent_env;
 
         Flow::Normal
     });
-    result(tcl, Flow::Normal, empty())
+    tcl.set_result(Flow::Normal, empty())
 }
 
 /// Implementation of the `if` standard command.
@@ -635,14 +641,14 @@ fn cmd_if(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
         let branch = args.get_mut(i + 1).map(mem::take);
         let mut cond = Vec::from(cond);
         cond.push(b'\n');
-        r = eval(tcl, &cond);
+        r = tcl.eval(&cond);
         if r != Flow::Normal {
             break;
         }
         if int(&tcl.result) != 0 {
             let mut branch = Vec::from(branch.unwrap());
             branch.push(b'\n');
-            r = eval(tcl, &branch);
+            r = tcl.eval(&branch);
             break;
         }
 
@@ -663,14 +669,14 @@ fn cmd_while(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
 
     debug!("while body = {:?}", String::from_utf8_lossy(&body));
     loop {
-        let r = eval(tcl, &cond);
+        let r = tcl.eval(&cond);
         if r != Flow::Normal {
             return r;
         }
         if int(&tcl.result) == 0 {
             return Flow::Normal;
         }
-        let r = eval(tcl, &body);
+        let r = tcl.eval(&body);
         match r {
             Flow::Again | Flow::Normal => (),
 
@@ -718,7 +724,7 @@ fn cmd_math(tcl: &mut Tcl, args: Vec<Box<Value>>) -> Flow {
     }
     text.reverse();
 
-    result(tcl, Flow::Normal, text.into())
+    tcl.set_result(Flow::Normal, text.into())
 }
 
 /// Type of a command implemented with a stateless function pointer, as opposed
@@ -736,8 +742,7 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
     (b"break", 1, |_, _| Flow::Break),
     (b"continue", 1, |_, _| Flow::Again),
     (b"return", 0, |tcl, mut args| {
-        result(
-            tcl,
+        tcl.set_result(
             Flow::Return,
             args.get_mut(1).map(mem::take).unwrap_or_default(),
         )

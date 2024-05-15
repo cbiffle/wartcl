@@ -3,9 +3,9 @@ use criterion::{criterion_group, criterion_main, Criterion};
 pub fn benchmark(c: &mut Criterion) {
     c.benchmark_group("eval(subst hello)")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::init();
+            let mut tcl = wartcl::Tcl::init();
             b.iter(move || {
-                let r = wartcl::eval(&mut tcl, b"subst hello\n");
+                let r = tcl.eval( b"subst hello\n");
                 assert_eq!(r, wartcl::Flow::Normal);
             })
         })
@@ -18,9 +18,9 @@ pub fn benchmark(c: &mut Criterion) {
         });
     c.benchmark_group("nested-ifs")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::init();
+            let mut tcl = wartcl::Tcl::init();
             b.iter(move || {
-                let r = wartcl::eval(&mut tcl, b"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}\n");
+                let r = tcl.eval( b"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}\n");
                 assert_eq!(r, wartcl::Flow::Normal);
             })
         })
@@ -33,10 +33,9 @@ pub fn benchmark(c: &mut Criterion) {
         });
     c.benchmark_group("complex-expr")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::init();
+            let mut tcl = wartcl::Tcl::init();
             b.iter(move || {
-                let r = wartcl::eval(&mut tcl,
-                                        b"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]\n");
+                let r = tcl.eval(b"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]\n");
                 assert_eq!(r, wartcl::Flow::Normal);
             })
         })
@@ -49,11 +48,10 @@ pub fn benchmark(c: &mut Criterion) {
         });
     c.benchmark_group("call-proc")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::init();
-            wartcl::eval(&mut tcl, b"proc testproc {x y z} { }\n");
+            let mut tcl = wartcl::Tcl::init();
+            tcl.eval( b"proc testproc {x y z} { }\n");
             b.iter(move || {
-                let r = wartcl::eval(&mut tcl,
-                                        b"testproc a b c\n");
+                let r = tcl.eval(b"testproc a b c\n");
                 assert_eq!(r, wartcl::Flow::Normal);
             })
         })

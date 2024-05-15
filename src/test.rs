@@ -193,10 +193,10 @@ fn check_eval(tcl: Option<&mut Tcl>, s: &[u8], expected: &[u8]) {
     let tcl = if let Some(outer) = tcl {
         outer
     } else {
-        local.insert(init())
+        local.insert(Tcl::init())
     };
 
-    if eval(tcl, s) == Flow::Error {
+    if tcl.eval(s) == Flow::Error {
         panic!("eval returned error: {:?}, ({:?})",
             String::from_utf8_lossy(&tcl.result),
             String::from_utf8_lossy(s));
@@ -224,10 +224,10 @@ fn test_1_subst() {
     check_eval(None, b"subst $foo", b"");
 
     if false { // TODO
-        let mut tcl = init();
-        var(&mut tcl, (*b"foo").into(), Some((*b"bar").into()));
-        var(&mut tcl, (*b"bar").into(), Some((*b"baz").into()));
-        var(&mut tcl, (*b"baz").into(), Some((*b"Hello").into()));
+        let mut tcl = Tcl::init();
+        tcl.var((*b"foo").into(), Some((*b"bar").into()));
+        tcl.var((*b"bar").into(), Some((*b"baz").into()));
+        tcl.var((*b"baz").into(), Some((*b"Hello").into()));
         check_eval(Some(&mut tcl), b"subst $foo", b"bar");
         check_eval(Some(&mut tcl), b"subst $foo[]$foo", b"barbar");
         check_eval(Some(&mut tcl), b"subst $$foo", b"baz");
@@ -299,7 +299,7 @@ fn test_2_flow() {
                { return [+ [fib [- $x 1]] [fib [- $x 2]]]}}; fib 20",
                b"10946");
 
-    let mut tcl = init();
+    let mut tcl = Tcl::init();
     check_eval(Some(&mut tcl), b"proc square {x} { * $x $x }; square 7", b"49");
     check_eval(Some(&mut tcl), b"set a 4", b"4");
     check_eval(Some(&mut tcl), b"square $a", b"16");
