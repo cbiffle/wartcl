@@ -127,14 +127,14 @@ impl Tcl {
 
                 Token::Word => {
                     // N.B. result ignored in original
-                    self.subst(from);
+                    self.subst(from)?;
                     cur.push(mem::take(&mut self.result));
                     list.push(flatten_string(&cur));
                     cur.clear();
                 }
 
                 Token::Part => {
-                    self.subst(from);
+                    self.subst(from)?;
                     cur.push(mem::take(&mut self.result));
                 }
                 Token::Cmd => {
@@ -660,7 +660,11 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Result<(), FlowChange> 
         let parent_env = tcl.env.parent.take().unwrap();
         tcl.env = parent_env;
 
-        r
+        match r {
+            Err(FlowChange::Return) | Ok(()) => Ok(()),
+            // Coerce break/continue at top level of proc into error.
+            Err(_) => Err(FlowChange::Error),
+        }
     });
     tcl.set_result_ok(empty())
 }
