@@ -1,6 +1,6 @@
 use std::{error::Error, io::{ErrorKind, Read}};
 
-use partclish::*;
+use wartcl::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut tcl = init();

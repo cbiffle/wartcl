@@ -269,19 +269,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ab1bc2a289d34bd04a330323ac98a1b4bc82c9d9fcb1e66b63caa84da26b575"
 
 [[package]]
-name = "orig"
+name = "partcl-wrapper"
 version = "0.1.0"
 dependencies = [
  "cc",
  "libc",
-]
-
-[[package]]
-name = "partclish"
-version = "0.1.0"
-dependencies = [
- "criterion",
- "orig",
 ]
 
 [[package]]
@@ -460,6 +452,14 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
+]
+
+[[package]]
+name = "wartcl"
+version = "0.1.0"
+dependencies = [
+ "criterion",
+ "partcl-wrapper",
 ]
 
 [[package]]
