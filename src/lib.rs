@@ -228,14 +228,19 @@ impl Tcl {
             }
             Some((b'[', rest)) => {
                 // ugh TODO
-                let mut rest = rest[..rest.len() - 1].to_vec();
-                rest.push(b'\n');
+                let rest = add_newline(&rest[..rest.len() - 1]);
                 self.eval(&rest)
             }
             _ => self.set_result(Flow::Normal, s.into()),
         }
     }
 
+}
+
+fn add_newline(v: impl Into<Vec<u8>>) -> Box<Value> {
+    let mut v: Vec<u8> = v.into();
+    v.push(b'\n');
+    v.into()
 }
 
 /// Parses `v` as a signed integer. This always succeeds; if `v` is not a valid
@@ -631,9 +636,7 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
     let body = mem::take(&mut args[3]);
     let params = mem::take(&mut args[2]);
     let name = &args[1];
-    let mut body = Vec::from(body);
-    body.push(b'\n');
-    let body = body;
+    let body = add_newline(body);
 
     let parsed_params = parse_list(&params);
 
@@ -655,40 +658,61 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
 }
 
 /// Implementation of the `if` standard command.
+///
+/// `if {condition} {body}`
+/// `if {condition} {body} else {body2}`
+/// `if {condition} {body} elseif {condition2} {body2} ...`
+/// `if {condition} {body} elseif {condition2} {body2} ... else {body3}`
 fn cmd_if(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
-    let n = args.len();
-    let mut r = Flow::Normal;
+    // Skip the first argument.
     let mut i = 1;
-    while i < n {
-        let cond = mem::take(&mut args[i]);
-        let branch = args.get_mut(i + 1).map(mem::take);
-        let mut cond = Vec::from(cond);
-        cond.push(b'\n');
+
+    // Prepare our result to return Error if the if is missing its condition.
+    let mut r = Flow::Error;
+
+    // We always arrive at the top of this loop while expecting a condition,
+    // either just after the initial "if", or after an "elseif".
+    while i < args.len() {
+        let cond = add_newline(mem::take(&mut args[i]));
         r = tcl.eval(&cond);
-        if r != Flow::Normal {
-            break;
-        }
-        if int(&tcl.result) != 0 {
-            let mut branch = Vec::from(branch.unwrap());
-            branch.push(b'\n');
+        if r != Flow::Normal { break; }
+
+        let cond = int(&tcl.result) != 0;
+
+        if cond {
+            let branch = mem::take(&mut args[i + 1]);
+            let branch = add_newline(branch);
             r = tcl.eval(&branch);
             break;
         }
 
         i += 2;
+
+        if let Some(next) = args.get(i) {
+            match &**next {
+                b"else" => {
+                    let branch = add_newline(mem::take(&mut args[i + 1]));
+                    r = tcl.eval(&branch);
+                    break;
+                }
+                b"elseif" => {
+                    // Prime the result to return error if elseif is the last
+                    // token.
+                    r = Flow::Error;
+                    i += 1;
+                }
+                _ => return Flow::Error,
+            }
+        }
     }
     r
 }
 
 /// Implementation of the `while` standard command.
 fn cmd_while(tcl: &mut Tcl, mut args: Vec<Box<Value>>) -> Flow {
-    let body = mem::take(&mut args[2]);
-    let mut body = Vec::from(body);
-    body.push(b'\n');
+    let body = add_newline(mem::take(&mut args[2]));
 
-    let cond = mem::take(&mut args[1]);
-    let mut cond = Vec::from(cond);
-    cond.push(b'\n');
+    let cond = add_newline(mem::take(&mut args[1]));
 
     debug!("while body = {:?}", String::from_utf8_lossy(&body));
     loop {

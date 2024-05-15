@@ -1,3 +1,28 @@
+// Changes made to the test cases here are as follows.
+//
+// # Trailing newlines
+//
+// The original lexer inherently relies on the ability to read past the end of
+// the strings it's passed. It will find a 0 there if the string is separately
+// allocated, or a different "end" character if not. (Close bracket is not
+// treated as an end character, and so the system also relies on allocating
+// copies of substituted commands.)
+//
+// I'm not willing to recreate this behavior, so I've changed these test cases.
+// To preserve the incremental parse behavior of the original, I'm using other
+// command-terminating bytes to indicate a complete command. Generally a \n
+// replaces the original \0.
+//
+// Note that no tests in the original use a zero-byte string. This is probably
+// good because I'm pretty sure the original lexer can't handle them.
+//
+//
+// # if/else syntax
+//
+// The original system doesn't support the 'else' and 'elseif' tokens in the if
+// command. I've fixed this, which has required patching the test cases to use
+// them.
+
 use super::*;
 
 #[track_caller]
@@ -39,19 +64,6 @@ fn check_tokens(input: &[u8], expect: &[(Token, &[u8])]) {
 
 #[test]
 fn test_0_lexer() {
-    // So, the original lexer inherently relies on the ability to read past
-    // the end of the strings it's passed. It will find a 0 there if the
-    // string is separately allocated, or a different "end" character if
-    // not. (Close bracket is not treated as an end character, and so the
-    // system also relies on allocating copies of substituted commands.)
-    //
-    // I'm not willing to recreate this behavior, so I've changed these test
-    // cases. To preserve the incremental parse behavior of the original,
-    // I'm using other command-terminating bytes to indicate a complete
-    // command. Generally a \n replaces the original \0.
-    //
-    // Note that no tests in the original use a zero-byte string. This is
-    // probably good because I'm pretty sure the lexer can't handle them.
 
     check_tokens(b"\n", &[(Token::Cmd, b"")]);
     check_tokens(b";\n", &[
@@ -205,7 +217,7 @@ fn check_eval(tcl: Option<&mut Tcl>, s: &[u8], expected: &[u8]) {
         "expected result {:?} but got {:?}",
         String::from_utf8_lossy(expected),
         String::from_utf8_lossy(&tcl.result));
-    
+
     println!("OK: {:?} -> {:?}",
              String::from_utf8_lossy(s),
              String::from_utf8_lossy(expected));
@@ -240,7 +252,6 @@ fn test_1_subst() {
     check_eval(None, b"subst hello[subst world]", b"helloworld");
     check_eval(None, b"subst hello[\n]world", b"helloworld");
 
-    
     /* Example from Picol */
     check_eval(None, b"set a su; set b bst; $a$b Hello", b"Hello");
     /* This is an error in TCL, but works in Picol */
@@ -264,18 +275,18 @@ fn test_1_subst() {
 
 #[test]
 fn test_2_flow() {
-    check_eval(None, b"if {< 1 2} {puts A} {puts B}", b"A");
-    check_eval(None, b"if {> 1 2} {puts A} {puts B}", b"B");
+    check_eval(None, b"if {< 1 2} {puts A} else {puts B}", b"A");
+    check_eval(None, b"if {> 1 2} {puts A} else {puts B}", b"B");
     check_eval(None, b"if {> 1 2} {puts A}", b"0");
 
     check_eval(None,
-               b"set x 0; if {== $x 0} {subst A} {== $x 1} {subst B} {subst C}",
+               b"set x 0; if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
                b"A");
     check_eval(None,
-               b"set x 1; if {== $x 0} {subst A} {== $x 1} {subst B} {subst C}",
+               b"set x 1; if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
                b"B");
     check_eval(None,
-               b"set x 2; if {== $x 0} {subst A} {== $x 1} {subst B} {subst C}",
+               b"set x 2; if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
                b"C");
 
     check_eval(None, b"while {< $x 5} {set x [+ $x 1]}", b"0");
@@ -296,7 +307,7 @@ fn test_2_flow() {
     check_eval(None, b"set x 1; proc two {} { set x 2;}; two; subst $x", b"1");
     /* Example from Picol */
     check_eval(None, b"proc fib {x} { if {<= $x 1} {return 1} \
-               { return [+ [fib [- $x 1]] [fib [- $x 2]]]}}; fib 20",
+               else { return [+ [fib [- $x 1]] [fib [- $x 2]]]}}; fib 20",
                b"10946");
 
     let mut tcl = Tcl::init();
@@ -338,4 +349,3 @@ fn test_3_math() {
 
     check_eval(None, b"set a 5;set b 7; subst [- [* 4 [+ $a $b]] 6]", b"42");
 }
-
