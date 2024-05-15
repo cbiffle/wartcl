@@ -201,7 +201,7 @@ fn test_0_lexer() {
 }
 
 #[track_caller]
-fn check_eval(tcl: Option<&mut Tcl>, s: &[u8], expected: &[u8]) {
+fn check_eval(tcl: Option<&mut Env>, s: &[u8], expected: &[u8]) {
     // Ensure termination
     let mut s = s.to_vec();
     s.push(b'\n');
@@ -211,7 +211,7 @@ fn check_eval(tcl: Option<&mut Tcl>, s: &[u8], expected: &[u8]) {
     let tcl = if let Some(outer) = tcl {
         outer
     } else {
-        local.insert(Tcl::init())
+        local.insert(Env::init())
     };
 
     match tcl.eval(s) {
@@ -236,7 +236,7 @@ fn check_eval(tcl: Option<&mut Tcl>, s: &[u8], expected: &[u8]) {
 }
 
 #[track_caller]
-fn check_eval_err(tcl: Option<&mut Tcl>, s: &[u8], expected: FlowChange) {
+fn check_eval_err(tcl: Option<&mut Env>, s: &[u8], expected: FlowChange) {
     // Ensure termination
     let mut s = s.to_vec();
     s.push(b'\n');
@@ -246,7 +246,7 @@ fn check_eval_err(tcl: Option<&mut Tcl>, s: &[u8], expected: FlowChange) {
     let tcl = if let Some(outer) = tcl {
         outer
     } else {
-        local.insert(Tcl::init())
+        local.insert(Env::init())
     };
 
     assert_eq!(tcl.eval(s), Err(expected.clone()));
@@ -274,7 +274,7 @@ fn test_1_subst() {
     check_eval(None, b"set foo {}; subst $foo", b"");
 
     if false { // TODO
-        let mut tcl = Tcl::init();
+        let mut tcl = Env::init();
         tcl.set_or_create_var((*b"foo").into(), (*b"bar").into());
         tcl.set_or_create_var((*b"bar").into(), (*b"baz").into());
         tcl.set_or_create_var((*b"baz").into(), (*b"Hello").into());
@@ -360,7 +360,7 @@ fn test_2_flow() {
                else { return [+ [fib [- $x 1]] [fib [- $x 2]]]}}; fib 20",
                b"10946");
 
-    let mut tcl = Tcl::init();
+    let mut tcl = Env::init();
     check_eval(Some(&mut tcl), b"proc square {x} { * $x $x }; square 7", b"49");
     check_eval(Some(&mut tcl), b"set a 4", b"4");
     check_eval(Some(&mut tcl), b"square $a", b"16");
