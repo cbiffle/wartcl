@@ -31,10 +31,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             if tok == Token::Cmd && !from.is_empty() {
                 let r = tcl.eval(&buf);
-                if let Err(e) = r {
-                    print!("{e:?}");
+                match r {
+                    Err(e) => {
+                        print!("{e:?}");
+                    }
+                    Ok(result) => {
+                        println!("{}", String::from_utf8_lossy(&result));
+                    }
                 }
-                println!("> {}", String::from_utf8_lossy(&tcl.result));
                 buf.clear();
                 break;
             }

@@ -214,15 +214,21 @@ fn check_eval(tcl: Option<&mut Tcl>, s: &[u8], expected: &[u8]) {
         local.insert(Tcl::init())
     };
 
-    if tcl.eval(s) == Err(FlowChange::Error) {
-        panic!("eval returned error: {:?}, ({:?})",
-            String::from_utf8_lossy(&tcl.result),
-            String::from_utf8_lossy(s));
+    match tcl.eval(s) {
+        Err(FlowChange::Error) => {
+            panic!("eval returned error: {:?}",
+                   String::from_utf8_lossy(s));
+        }
+        Ok(value) => {
+            assert_eq!(&*value, expected,
+                       "expected result {:?} but got {:?}",
+                       String::from_utf8_lossy(expected),
+                       String::from_utf8_lossy(&value));
+        }
+        Err(other) => {
+            panic!("eval returned unexpected result: {other:?}");
+        }
     }
-    assert_eq!(&*tcl.result, expected,
-        "expected result {:?} but got {:?}",
-        String::from_utf8_lossy(expected),
-        String::from_utf8_lossy(&tcl.result));
 
     println!("OK: {:?} -> {:?}",
              String::from_utf8_lossy(s),
@@ -243,7 +249,7 @@ fn check_eval_err(tcl: Option<&mut Tcl>, s: &[u8], expected: FlowChange) {
         local.insert(Tcl::init())
     };
 
-    assert_eq!(tcl.eval(s), Err(expected));
+    assert_eq!(tcl.eval(s), Err(expected.clone()));
 
     println!("OK: {:?} -> !{expected:?}",
              String::from_utf8_lossy(s));
@@ -306,7 +312,9 @@ fn test_1_subst() {
 fn test_2_flow() {
     check_eval(None, b"if {< 1 2} {puts A} else {puts B}", b"A");
     check_eval(None, b"if {> 1 2} {puts A} else {puts B}", b"B");
-    check_eval(None, b"if {> 1 2} {puts A}", b"0");
+    // DEVIATION: partcl returns 0 if no branch passes, standard says empty
+    // string -- I choose empty string.
+    check_eval(None, b"if {> 1 2} {puts A}", b"");
 
     check_eval(None,
                b"set x 0; if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
@@ -318,17 +326,22 @@ fn test_2_flow() {
                b"set x 2; if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
                b"C");
 
-    check_eval(None, b"while {< $x 5} {set x [+ $x 1]}", b"0");
+    // DEVIATION: partcl returns 0 from while loops, standard says empty string;
+    // I choose empty string.
+    check_eval(None, b"while {< $x 5} {set x [+ $x 1]}", b"");
     // DEVIATION: partcl break returns the string "break". It does this due
     // to an almost accidental leaving-around of state. I have fixed this; a
     // loop exited with "break" now returns the empty string like in normal
     // Tcl.
     check_eval(None, b"while {== 1 1} {set x [+ $x 1]; if {== $x 5} {break}}",
                b"");
-    check_eval(
+    // DEVIATION: partcl is able to ignore the fact that this ends in RETURN
+    // because of the lack of type safety on return values; I need to handle it
+    // explicitly here, which I think is a better test anyway.
+    check_eval_err(
         None,
         b"while {== 1 1} {set x [+ $x 1]; if {!= $x 5} {continue} ; return foo}",
-        b"foo");
+        FlowChange::Return((*b"foo").into()));
     check_eval(None, b"proc foo {} { subst hello }; foo", b"hello");
     check_eval(None, b"proc five {} { + 2 3}; five", b"5");
     check_eval(None, b"proc foo {a} { subst $a }; foo hello", b"hello");
@@ -347,11 +360,13 @@ fn test_2_flow() {
     check_eval(Some(&mut tcl), b"subst \"I can compute that $a[]x$a = [square $a]\"",
                b"I can compute that 4x4 = 16");
     check_eval(Some(&mut tcl), b"set a 1", b"1");
+    // DEVIATION: partcl's version of this test relied on either while or if's
+    // tendency to return "0" (not clear which tbh).
     check_eval(Some(&mut tcl), b"while {<= $a 10} { puts \"$a [== $a 5]\";\
                if {== $a 5} { puts {Missing five!}; set a [+ $a 1]; \
                continue;}; puts \"I can compute that $a[]x$a = [square \
                $a]\" ; set a [+ $a 1]}",
-               b"0");
+               b"");
     drop(tcl);
 
     // Weirdly, the partcl tests don't have any tests for procs with >2
