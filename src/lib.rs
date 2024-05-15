@@ -636,6 +636,7 @@ fn cmd_puts(_tcl: &mut Env, mut args: Vec<OwnedValue>) -> Result<OwnedValue, Flo
 }
 
 /// Implementation of the `proc` standard command.
+#[cfg(feature = "proc")]
 fn cmd_proc(tcl: &mut Env, mut args: Vec<OwnedValue>) -> Result<OwnedValue, FlowChange> {
     let body = mem::take(&mut args[3]);
     let params = mem::take(&mut args[2]);
@@ -734,6 +735,7 @@ fn cmd_while(tcl: &mut Env, mut args: Vec<OwnedValue>) -> Result<OwnedValue, Flo
 
 /// Implementation of the standard math commands; parses its first argument to
 /// choose the operation.
+#[cfg(any(feature = "arithmetic", feature = "comparison"))]
 fn cmd_math(_tcl: &mut Env, args: Vec<OwnedValue>) -> Result<OwnedValue, FlowChange> {
     let bval = &args[2];
     let aval = &args[1];
@@ -743,16 +745,28 @@ fn cmd_math(_tcl: &mut Env, args: Vec<OwnedValue>) -> Result<OwnedValue, FlowCha
     let b = int(bval);
 
     let c = match &**opval {
+        #[cfg(feature = "arithmetic")]
         b"+" => a + b,
+        #[cfg(feature = "arithmetic")]
         b"-" => a - b,
+        #[cfg(feature = "arithmetic")]
         b"*" => a * b,
+        #[cfg(feature = "arithmetic")]
         b"/" => a / b,
+
+        #[cfg(feature = "comparison")]
         b">" => (a > b) as i32,
+        #[cfg(feature = "comparison")]
         b">=" => (a >= b) as i32,
+        #[cfg(feature = "comparison")]
         b"<" => (a < b) as i32,
+        #[cfg(feature = "comparison")]
         b"<=" => (a <= b) as i32,
+        #[cfg(feature = "comparison")]
         b"==" => (a == b) as i32,
+        #[cfg(feature = "comparison")]
         b"!=" => (a != b) as i32,
+
         _ => panic!(),
     };
 
@@ -764,11 +778,10 @@ fn cmd_math(_tcl: &mut Env, args: Vec<OwnedValue>) -> Result<OwnedValue, FlowCha
 type StaticCmd = fn(&mut Env, Vec<OwnedValue>) -> Result<OwnedValue, FlowChange>;
 
 static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
+    // So far I consider these commands universal, and haven't felt the need to
+    // make them optional. That could be changed.
     (b"set", 0, cmd_set),
-    #[cfg(any(test, feature = "std"))]
-    (b"puts", 2, cmd_puts),
     (b"subst", 2, cmd_subst),
-    (b"proc", 4, cmd_proc),
     (b"if", 0, cmd_if),
     (b"while", 3, cmd_while),
     (b"break", 1, |_, _| Err(FlowChange::Break)),
@@ -779,18 +792,35 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
         ))
     }),
 
+    #[cfg(any(test, feature = "std"))]
+    (b"puts", 2, cmd_puts),
+
+    #[cfg(feature = "proc")]
+    (b"proc", 4, cmd_proc),
+
     #[cfg(feature = "incr")]
     (b"incr", 2, cmd_incr),
 
+    #[cfg(feature = "arithmetic")]
     (b"+", 3, cmd_math),
+    #[cfg(feature = "arithmetic")]
     (b"-", 3, cmd_math),
+    #[cfg(feature = "arithmetic")]
     (b"*", 3, cmd_math),
+    #[cfg(feature = "arithmetic")]
     (b"/", 3, cmd_math),
+
+    #[cfg(feature = "comparison")]
     (b">", 3, cmd_math),
+    #[cfg(feature = "comparison")]
     (b">=", 3, cmd_math),
+    #[cfg(feature = "comparison")]
     (b"<", 3, cmd_math),
+    #[cfg(feature = "comparison")]
     (b"<=", 3, cmd_math),
+    #[cfg(feature = "comparison")]
     (b"==", 3, cmd_math),
+    #[cfg(feature = "comparison")]
     (b"!=", 3, cmd_math),
 ];
 

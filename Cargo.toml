@@ -6,8 +6,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["std", "incr"]
+default = ["std", "proc", "arithmetic", "comparison", "incr"]
 std = []
+proc = []
+arithmetic = []
+comparison = []
 incr = []
 
 [dependencies]
