@@ -147,9 +147,11 @@ impl Tcl {
                         let cmdname = &*list[0];
                         debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
                         let mut cmd = self.cmds.as_deref();
+                        let mut found = false;
 
                         while let Some(c) = cmd.take() {
                             if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
+                                found = true;
                                 debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
                                 let f = Rc::clone(&c.function);
                                 f(self, mem::take(&mut list))?;
@@ -158,6 +160,11 @@ impl Tcl {
 
                             cmd = c.next.as_deref();
                         }
+
+                        if !found {
+                            return Err(FlowChange::Error);
+                        }
+
                         debug!("normal");
                         debug_assert!(list.is_empty());
                     }

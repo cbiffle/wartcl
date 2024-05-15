@@ -22,6 +22,13 @@
 // The original system doesn't support the 'else' and 'elseif' tokens in the if
 // command. I've fixed this, which has required patching the test cases to use
 // them.
+//
+//
+// # Checking error cases
+//
+// The original tests has basically no validation of error behavior, which let
+// several subtle bugs sneak through (either in their implementation, or in my
+// reimplementation). The check_eval_err tests fix this.
 
 use super::*;
 
@@ -64,7 +71,6 @@ fn check_tokens(input: &[u8], expect: &[(Token, &[u8])]) {
 
 #[test]
 fn test_0_lexer() {
-
     check_tokens(b"\n", &[(Token::Cmd, b"")]);
     check_tokens(b";\n", &[
         (Token::Cmd, b";"),
@@ -223,10 +229,33 @@ fn check_eval(tcl: Option<&mut Tcl>, s: &[u8], expected: &[u8]) {
              String::from_utf8_lossy(expected));
 }
 
+#[track_caller]
+fn check_eval_err(tcl: Option<&mut Tcl>, s: &[u8], expected: FlowChange) {
+    // Ensure termination
+    let mut s = s.to_vec();
+    s.push(b'\n');
+    let s = &s[..];
+
+    let mut local = None;
+    let tcl = if let Some(outer) = tcl {
+        outer
+    } else {
+        local.insert(Tcl::init())
+    };
+
+    assert_eq!(tcl.eval(s), Err(expected));
+
+    println!("OK: {:?} -> !{expected:?}",
+             String::from_utf8_lossy(s));
+}
+
 #[test]
 fn test_1_subst() {
     // N.B. for these commands, the test framework will append the
     // terminating character to make the damn lexer happy.
+
+    // subst typo:
+    check_eval_err(None, b"sust hello", FlowChange::Error);
 
     check_eval(None, b"subst hello", b"hello");
     check_eval(None, b"subst {hello}", b"hello");
