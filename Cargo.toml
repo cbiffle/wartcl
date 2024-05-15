@@ -1,3 +1,5 @@
+workspace = { members = ["orig"] }
+
 [package]
 name = "partclish"
 version = "0.1.0"
@@ -13,7 +15,12 @@ panic = "abort"
 
 [dev-dependencies]
 criterion = "0.5.1"
+orig.path = "orig"
 
 [[bench]]
 name = "basic"
+harness = false
+
+[[bench]]
+name = "orig"
 harness = false
