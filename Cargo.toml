@@ -20,7 +20,3 @@ orig.path = "orig"
 [[bench]]
 name = "basic"
 harness = false
-
-[[bench]]
-name = "orig"
-harness = false
