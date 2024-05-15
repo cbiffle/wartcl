@@ -242,11 +242,39 @@ fn add_newline(v: impl Into<Vec<u8>>) -> OwnedValue {
 
 /// Parses `v` as a signed integer. This always succeeds; if `v` is not a valid
 /// signed integer, this returns 0.
-pub fn int(v: &Value) -> i32 {
-    core::str::from_utf8(v)
-        .ok()
-        .and_then(|s| s.parse::<i32>().ok())
-        .unwrap_or(0)
+///
+/// Quirks of this implementation:
+/// - Skips leading whitespace
+/// - Allows a + sign on positive numbers in addition to a - for negative.
+/// - Parses a number from 0 or more ASCII decimal digits.
+/// - Ignores any trailing non-digit characters (whitespace or otherwise).
+pub fn int(mut v: &Value) -> i32 {
+    // In partcl, this was just a call to atoi. Rust's standard library
+    // integer-string conversions are all _nice_ and have _error checking_ and
+    // _Unicode handling_ and stuff like that. It adds about a kiB.
+    //
+    // So instead, here's an atoi-equivalent handrolled function.
+
+    skip_leading_whitespace(&mut v);
+
+    let mut negative = false;
+    let Some((&first, rest)) = v.split_first() else {
+        return 0;
+    };
+    if first == b'+' || first == b'-' {
+        v = rest;
+        negative = first == b'-';
+    }
+
+    let mut value = 0;
+    for &c in v {
+        if c.is_ascii_digit() {
+            value = (value * 10) + (c - b'0') as i32;
+        } else {
+            break;
+        }
+    }
+    if negative { -value } else { value }
 }
 
 pub fn int_value(x: i32) -> OwnedValue {
