@@ -174,34 +174,34 @@ impl Tcl {
         Ok(last_result.unwrap_or_default())
     }
 
-    /// Looks up a variable named `name` in the current innermost scope,
-    /// creating it if it doesn't exist.
-    ///
-    /// If `value` is `Some(v)`, the variable's contents will be set to `v`. If
-    /// a variable is newly created but `value` is `None`, the variable will
-    /// default to the empty string.
-    ///
-    /// Returns a copy of the variable's contents. (TODO: ideally this would not
-    /// imply an automatic copy.)
-    fn var(&mut self, name: OwnedValue, value: Option<OwnedValue>) -> OwnedValue {
+    fn find_var(&mut self, name: &Value) -> Option<&mut Var> {
         let mut var = self.env.vars.as_mut();
         while let Some(v) = var.take() {
-            if v.name == name {
-                var = Some(v);
-                break;
+            if &*v.name == name {
+                return Some(v);
             }
             var = v.next.as_mut();
         }
-        let var = match var {
+        None
+    }
+
+    /// Sets a variable named `name` to `value` in the current innermost scope,
+    /// creating it if it doesn't exist.
+    pub fn set_or_create_var(&mut self, name: OwnedValue, value: OwnedValue) {
+        let var = match self.find_var(&name) {
             Some(v) => v,
             None => self.env.add_var(name),
         };
 
-        if let Some(value) = value {
-            var.value = value;
-        }
+        var.value = value;
+    }
 
-        var.value.clone()
+    /// Gets a copy of the contents of an existing variable, or returns
+    /// `Err(Error)` if it doesn't exist.
+    pub fn get_existing_var(&mut self, name: &Value) -> Option<OwnedValue> {
+        let var = self.find_var(name)?;
+
+        Some(var.value.clone())
     }
 
     /// Performs a single substitution step on `s`, returning the result on
@@ -602,9 +602,12 @@ struct Cmd {
 /// Implementation of the `set` standard command.
 fn cmd_set(tcl: &mut Tcl, mut args: Vec<OwnedValue>) -> Result<OwnedValue, FlowChange> {
     let name = mem::take(&mut args[1]);
-    let val = args.get_mut(2).map(mem::take);
-
-    Ok(tcl.var(name, val))
+    if let Some(new_value) = args.get_mut(2) {
+        tcl.set_or_create_var(name, new_value.clone());
+        Ok(mem::take(new_value))
+    } else {
+        tcl.get_existing_var(&name).ok_or(FlowChange::Error)
+    }
 }
 
 /// Implementation of the `subst` standard command.
@@ -615,8 +618,12 @@ fn cmd_subst(tcl: &mut Tcl, args: Vec<OwnedValue>) -> Result<OwnedValue, FlowCha
 
 fn cmd_incr(tcl: &mut Tcl, mut args: Vec<OwnedValue>) -> Result<OwnedValue, FlowChange> {
     let name = mem::take(&mut args[1]);
-    let v = tcl.var(name.clone(), None);
-    Ok(tcl.var(name, Some(int_value(int(&v) + 1))))
+    let current_int = tcl.get_existing_var(&name)
+        .map(|v| int(&v))
+        .unwrap_or(0);
+    let new = int_value(current_int + 1);
+    tcl.set_or_create_var(name, new.clone());
+    Ok(new)
 }
 
 /// Implementation of the `puts` standard command.
@@ -640,8 +647,8 @@ fn cmd_proc(tcl: &mut Tcl, mut args: Vec<OwnedValue>) -> Result<OwnedValue, Flow
         tcl.env = Env::alloc(Some(mem::take(&mut tcl.env)));
 
         for (i, param) in parsed_params.iter().enumerate() {
-            let v = act_args.get_mut(i + 1).map(mem::take);
-            tcl.var(param.clone(), v);
+            let v = mem::take(act_args.get_mut(i + 1).ok_or(FlowChange::Error)?);
+            tcl.set_or_create_var(param.clone(), v);
         }
         let r = tcl.eval(&body);
 

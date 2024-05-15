@@ -268,13 +268,16 @@ fn test_1_subst() {
     check_eval(None, b"subst {hello world}", b"hello world");
     check_eval(None, b"subst {hello {world}}", b"hello {world}");
 
-    check_eval(None, b"subst $foo", b"");
+    // DEVIATION: partcl creates undefined variables on references and stores
+    // the empty string in them. This is bad and I'm not replicating it.
+    check_eval_err(None, b"subst $foo", FlowChange::Error);
+    check_eval(None, b"set foo {}; subst $foo", b"");
 
     if false { // TODO
         let mut tcl = Tcl::init();
-        tcl.var((*b"foo").into(), Some((*b"bar").into()));
-        tcl.var((*b"bar").into(), Some((*b"baz").into()));
-        tcl.var((*b"baz").into(), Some((*b"Hello").into()));
+        tcl.set_or_create_var((*b"foo").into(), (*b"bar").into());
+        tcl.set_or_create_var((*b"bar").into(), (*b"baz").into());
+        tcl.set_or_create_var((*b"baz").into(), (*b"Hello").into());
         check_eval(Some(&mut tcl), b"subst $foo", b"bar");
         check_eval(Some(&mut tcl), b"subst $foo[]$foo", b"barbar");
         check_eval(Some(&mut tcl), b"subst $$foo", b"baz");
@@ -328,19 +331,24 @@ fn test_2_flow() {
 
     // DEVIATION: partcl returns 0 from while loops, standard says empty string;
     // I choose empty string.
-    check_eval(None, b"while {< $x 5} {set x [+ $x 1]}", b"");
+    // DEVIATION: partcl creates variables on reference to contain empty string,
+    // which it treats as zero; this hides errors and I choose to treat it as an
+    // error like standard Tcl. So, we must set x first here.
+    check_eval(None, b"set x 0; while {< $x 5} {set x [+ $x 1]}", b"");
     // DEVIATION: partcl break returns the string "break". It does this due
     // to an almost accidental leaving-around of state. I have fixed this; a
     // loop exited with "break" now returns the empty string like in normal
     // Tcl.
-    check_eval(None, b"while {== 1 1} {set x [+ $x 1]; if {== $x 5} {break}}",
+    // DEVIATION: again with the undefined variables
+    check_eval(None, b"set x 0; while {== 1 1} {set x [+ $x 1]; if {== $x 5} {break}}",
                b"");
     // DEVIATION: partcl is able to ignore the fact that this ends in RETURN
     // because of the lack of type safety on return values; I need to handle it
     // explicitly here, which I think is a better test anyway.
+    // DEVIATION: again with the undefined variables
     check_eval_err(
         None,
-        b"while {== 1 1} {set x [+ $x 1]; if {!= $x 5} {continue} ; return foo}",
+        b"set x 0; while {== 1 1} {set x [+ $x 1]; if {!= $x 5} {continue} ; return foo}",
         FlowChange::Return((*b"foo").into()));
     check_eval(None, b"proc foo {} { subst hello }; foo", b"hello");
     check_eval(None, b"proc five {} { + 2 3}; five", b"5");
