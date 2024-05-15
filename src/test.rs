@@ -236,6 +236,11 @@ fn check_eval(tcl: Option<&mut Env>, s: &[u8], expected: &[u8]) {
 }
 
 #[track_caller]
+fn check_eval_new(s: &[u8], expected: &[u8]) {
+    check_eval(None, s, expected)
+}
+
+#[track_caller]
 fn check_eval_err(tcl: Option<&mut Env>, s: &[u8], expected: FlowChange) {
     // Ensure termination
     let mut s = s.to_vec();
@@ -400,4 +405,17 @@ fn test_3_math() {
     check_eval(None, b"/ 7 2", b"3");
 
     check_eval(None, b"set a 5;set b 7; subst [- [* 4 [+ $a $b]] 6]", b"42");
+
+    // New operations not available in partcl:
+    check_eval_new(
+        b"incr x",
+        b"1",
+    );
+
+    check_eval_new(
+        b"incr x
+          incr x",
+        b"2",
+    );
+
 }

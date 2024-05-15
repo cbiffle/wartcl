@@ -616,6 +616,7 @@ fn cmd_subst(tcl: &mut Env, args: Vec<OwnedValue>) -> Result<OwnedValue, FlowCha
     tcl.subst(s)
 }
 
+#[cfg(feature = "incr")]
 fn cmd_incr(tcl: &mut Env, mut args: Vec<OwnedValue>) -> Result<OwnedValue, FlowChange> {
     let name = mem::take(&mut args[1]);
     let current_int = tcl.get_existing_var(&name)
@@ -777,7 +778,10 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
             args.get_mut(1).map(mem::take).unwrap_or_default()
         ))
     }),
-    //(b"incr", 2, cmd_incr),
+
+    #[cfg(feature = "incr")]
+    (b"incr", 2, cmd_incr),
+
     (b"+", 3, cmd_math),
     (b"-", 3, cmd_math),
     (b"*", 3, cmd_math),
