@@ -238,10 +238,12 @@ fn add_newline(v: impl Into<Vec<u8>>) -> OwnedValue {
 /// Parses `v` as a signed integer. This always succeeds; if `v` is not a valid
 /// signed integer, this returns 0.
 ///
+/// This handles hex numbers prefixed with a leading `0x`.
+///
 /// Quirks of this implementation:
 /// - Skips leading whitespace
 /// - Allows a + sign on positive numbers in addition to a - for negative.
-/// - Parses a number from 0 or more ASCII decimal digits.
+/// - Parses a number from 0 or more valid ASCII digits.
 /// - Ignores any trailing non-digit characters (whitespace or otherwise).
 pub fn int(mut v: &Value) -> i32 {
     // In partcl, this was just a call to atoi. Rust's standard library
@@ -262,11 +264,22 @@ pub fn int(mut v: &Value) -> i32 {
     }
 
     let mut value = 0;
-    for &c in v {
-        if c.is_ascii_digit() {
+    if let Some(hexits) = v.strip_prefix(b"0x") {
+        for &c in hexits {
+            if !c.is_ascii_hexdigit() { break; }
+
+            let c = c.to_ascii_lowercase();
+            value = (value * 16) + if c >= b'a' {
+                (c - b'a') as i32 + 10
+            } else {
+                (c - b'0') as i32
+            };
+        }
+    } else {
+        for &c in v {
+            if !c.is_ascii_digit() { break; }
+
             value = (value * 10) + (c - b'0') as i32;
-        } else {
-            break;
         }
     }
     if negative { -value } else { value }
