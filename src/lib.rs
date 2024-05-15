@@ -78,16 +78,16 @@ impl Tcl {
     /// bundled command set before returning it.
     pub fn init() -> Self {
         let env = Env::alloc(None);
-    
+
         let mut tcl = Self {
             env,
             ..Self::default()
         };
-    
+
         for &(name, arity, function) in STANDARD_COMMANDS {
             tcl.register(name, arity, function);
         }
-    
+
         tcl
     }
 
@@ -115,14 +115,14 @@ impl Tcl {
     pub fn eval(&mut self, s: &Value) -> Flow {
         debug!("eval({:?})", String::from_utf8_lossy(s));
         let mut p = Tokenizer::new(s);
-    
+
         let mut cur = Vec::new();
         let mut list = Vec::new();
-    
+
         while let Some((tok, from)) = p.next(true) {
             match tok {
                 Token::Error => return self.set_result(Flow::Error, Box::new([])),
-    
+
                 Token::Word => {
                     // N.B. result ignored in original
                     self.subst(from);
@@ -130,7 +130,7 @@ impl Tcl {
                     list.push(flatten_string(&cur));
                     cur.clear();
                 }
-    
+
                 Token::Part => {
                     self.subst(from);
                     cur.push(mem::take(&mut self.result));
@@ -153,7 +153,7 @@ impl Tcl {
                                 r = f(self, mem::take(&mut list));
                                 break;
                             }
-    
+
                             cmd = c.next.as_deref();
                         }
                         if r != Flow::Normal {
@@ -166,7 +166,7 @@ impl Tcl {
                 }
             }
         }
-    
+
         debug!("end eval");
         Flow::Normal
     }
@@ -199,11 +199,11 @@ impl Tcl {
             Some(v) => v,
             None => self.env.add_var(name),
         };
-    
+
         if let Some(value) = value {
             var.value = value;
         }
-    
+
         var.value.clone()
     }
 
@@ -260,7 +260,7 @@ pub fn int_value(x: i32) -> Box<Value> {
         text.push((c % 10) as u8 + b'0');
         c /= 10;
         if c == 0 { break; }
-    } 
+    }
     if negative {
         text.push(b'-');
     }
