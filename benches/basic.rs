@@ -90,6 +90,48 @@ pub fn benchmark(c: &mut Criterion) {
                 assert_eq!(r, 1);
             })
         });
+    // Don't really have any benchmarks testing variable binding and access, so
+    // here we go.
+    //
+    // 45 is the largest fibonacci sequence number that can be represented in
+    // our i32 integer type.
+    c.benchmark_group("iterative-fib-45")
+        .bench_function("wartcl", |b| {
+            let mut tcl = wartcl::Env::init();
+            tcl.eval(b"\
+                proc fib {x} { \
+                    set a 0; \
+                    set b 1; \
+                    while {!= $x 0} { \
+                        set x [- $x 1] ; \
+                        set t $b; \
+                        set b [+ $a $b]; \
+                        set a $t \
+                    }; return $a \
+                }").unwrap();
+            b.iter(move || {
+                let r = tcl.eval(b"fib 45");
+                assert!(r.is_ok());
+            })
+        })
+        .bench_function("partcl", |b| {
+            let mut tcl = partcl_wrapper::create();
+            tcl.eval(c"\
+                proc fib {x} { \
+                    set a 0; \
+                    set b 1; \
+                    while {!= $x 0} { \
+                        set x [- $x 1] ; \
+                        set t $b; \
+                        set b [+ $a $b]; \
+                        set a $t \
+                    }; return $a \
+                }");
+            b.iter(move || {
+                let r = tcl.eval(c"fib 45");
+                assert_eq!(r, 1);
+            })
+        });
 }
 
 criterion_group!(benches, benchmark);
