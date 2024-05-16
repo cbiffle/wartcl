@@ -122,32 +122,27 @@ impl Env {
                     return Err(FlowChange::Error);
                 }
 
-                Some(Token::Word(w)) => {
+                Some(Token::Word(w) | Token::Part(w)) => {
                     cur.push(self.subst(w)?);
-                    list.push(flatten_string(&cur));
-                    cur.clear();
+                    if matches!(tok, Some(Token::Word(_))) {
+                        list.push(flatten_string(&cur));
+                        cur.clear();
+                    }
                 }
 
-                Some(Token::Part(w)) => {
-                    cur.push(self.subst(w)?);
-                }
                 Some(Token::CmdSep) | None => {
                     if !cur.is_empty() {
                         return Err(FlowChange::Error);
                     }
 
-                    let n = list.len();
-                    if n == 0 {
-                        debug!("Cmd with zero length list");
-                    } else {
+                    if let Some(cmdname) = list.first() {
                         debug!("Cmd with proper list");
-                        let cmdname = &*list[0];
                         debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
                         let mut cmd = self.cmds.as_deref();
                         let mut found = false;
 
                         while let Some(c) = cmd.take() {
-                            if &*c.name == cmdname && (c.arity == 0 || c.arity == n) {
+                            if &c.name == cmdname && (c.arity == 0 || c.arity == list.len()) {
                                 found = true;
                                 debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
                                 let f = Rc::clone(&c.function);
