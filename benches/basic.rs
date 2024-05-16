@@ -5,14 +5,14 @@ pub fn benchmark(c: &mut Criterion) {
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::init();
             b.iter(move || {
-                let r = tcl.eval( b"subst hello\n");
+                let r = tcl.eval( b"subst hello");
                 assert!(r.is_ok());
             })
         })
         .bench_function("partcl", |b| {
             let mut tcl = partcl_wrapper::create();
             b.iter(move || {
-                let r = tcl.eval(c"subst hello\n");
+                let r = tcl.eval(c"subst hello");
                 assert_eq!(r, 1);
             })
         });
@@ -20,14 +20,14 @@ pub fn benchmark(c: &mut Criterion) {
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::init();
             b.iter(move || {
-                let r = tcl.eval( b"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}\n");
+                let r = tcl.eval( b"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}");
                 assert!(r.is_ok());
             })
         })
         .bench_function("partcl", |b| {
             let mut tcl = partcl_wrapper::create();
             b.iter(move || {
-                let r = tcl.eval(c"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}\n");
+                let r = tcl.eval(c"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}");
                 assert_eq!(r, 1);
             })
         });
@@ -35,31 +35,31 @@ pub fn benchmark(c: &mut Criterion) {
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::init();
             b.iter(move || {
-                let r = tcl.eval(b"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]\n");
+                let r = tcl.eval(b"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]");
                 assert!(r.is_ok());
             })
         })
         .bench_function("partcl", |b| {
             let mut tcl = partcl_wrapper::create();
             b.iter(move || {
-                let r = tcl.eval(c"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]\n");
+                let r = tcl.eval(c"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]");
                 assert_eq!(r, 1);
             })
         });
     c.benchmark_group("call-proc")
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::init();
-            tcl.eval( b"proc testproc {x y z} { }\n").unwrap();
+            tcl.eval( b"proc testproc {x y z} { }").unwrap();
             b.iter(move || {
-                let r = tcl.eval(b"testproc a b c\n");
+                let r = tcl.eval(b"testproc a b c");
                 assert!(r.is_ok());
             })
         })
         .bench_function("partcl", |b| {
             let mut tcl = partcl_wrapper::create();
-            tcl.eval(c"proc testproc {x y z} { }\n");
+            tcl.eval(c"proc testproc {x y z} { }");
             b.iter(move || {
-                let r = tcl.eval(c"testproc a b c\n");
+                let r = tcl.eval(c"testproc a b c");
                 assert_eq!(r, 1);
             })
         });
