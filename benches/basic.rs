@@ -63,6 +63,33 @@ pub fn benchmark(c: &mut Criterion) {
                 assert_eq!(r, 1);
             })
         });
+    c.benchmark_group("recursive-fib-5")
+        .bench_function("wartcl", |b| {
+            let mut tcl = wartcl::Env::init();
+            tcl.eval(b"\
+                proc fib {x} { \
+                    if {<= $x 1} {return 1} else { \
+                        return [+ [fib [- $x 1]] [fib [- $x 2]]] \
+                    } \
+                }").unwrap();
+            b.iter(move || {
+                let r = tcl.eval(b"fib 5");
+                assert!(r.is_ok());
+            })
+        })
+        .bench_function("partcl", |b| {
+            let mut tcl = partcl_wrapper::create();
+            tcl.eval(c"\
+                proc fib {x} { \
+                    if {<= $x 1} {return 1} { \
+                        return [+ [fib [- $x 1]] [fib [- $x 2]]] \
+                    } \
+                }");
+            b.iter(move || {
+                let r = tcl.eval(c"fib 5");
+                assert_eq!(r, 1);
+            })
+        });
 }
 
 criterion_group!(benches, benchmark);
