@@ -115,23 +115,27 @@ impl Env {
 
         let mut last_result = None;
 
-        while let Some((tok, from)) = p.next(true) {
+        loop {
+            let tok = p.next();
             match tok {
-                Token::Error => {
+                Some(Token::Error) => {
                     return Err(FlowChange::Error);
                 }
 
-                Token::Word => {
-                    // N.B. result ignored in original
-                    cur.push(self.subst(from)?);
+                Some(Token::Word(w)) => {
+                    cur.push(self.subst(w)?);
                     list.push(flatten_string(&cur));
                     cur.clear();
                 }
 
-                Token::Part => {
-                    cur.push(self.subst(from)?);
+                Some(Token::Part(w)) => {
+                    cur.push(self.subst(w)?);
                 }
-                Token::Cmd => {
+                Some(Token::CmdSep) | None => {
+                    if !cur.is_empty() {
+                        return Err(FlowChange::Error);
+                    }
+
                     let n = list.len();
                     if n == 0 {
                         debug!("Cmd with zero length list");
@@ -161,6 +165,10 @@ impl Env {
 
                         debug!("normal");
                         debug_assert!(list.is_empty());
+                    }
+
+                    if tok.is_none() {
+                        break;
                     }
                 }
             }
@@ -216,23 +224,14 @@ impl Env {
             Some((b'$', name)) => {
                 let mut subcmd = b"set ".to_vec();
                 subcmd.extend_from_slice(name);
-                subcmd.push(b'\n');
                 self.eval(&subcmd)
             }
             Some((b'[', rest)) => {
-                // ugh TODO
-                let rest = add_newline(&rest[..rest.len() - 1]);
-                self.eval(&rest)
+                self.eval(&rest[..rest.len() - 1])
             }
             _ => Ok(s.into()),
         }
     }
-}
-
-fn add_newline(v: impl Into<Vec<u8>>) -> OwnedValue {
-    let mut v: Vec<u8> = v.into();
-    v.push(b'\n');
-    v.into()
 }
 
 /// Parses `v` as a signed integer. This always succeeds; if `v` is not a valid
@@ -301,69 +300,6 @@ pub fn int_value(x: i32) -> OwnedValue {
     text.into()
 }
 
-/// Types of tokens that may be produced by the tokenizer.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum Token {
-    /// A command has been completed (though it might be empty).
-    Cmd,
-    /// A word has been completed syntactically. Note that a "word" in this case
-    /// may be an arbitrarily complex braced structure, or a subcommand, or a
-    /// quoted string, in addition to the obvious "string of characters without
-    /// whitespace" definition.
-    Word,
-    /// Part of a word has been completed. Multiple parts found next to each
-    /// other should be pasted together.
-    Part,
-    /// Input was invalid.
-    Error,
-}
-
-/// Source code tokenizer state.
-pub struct Tokenizer<'a> {
-    text: &'a Value,
-    quote_mode: bool,
-}
-
-impl<'a> Tokenizer<'a> {
-    /// Creates a new tokenizer to process the input `text`.
-    pub fn new(text: &'a Value) -> Self {
-        Self {
-            text,
-            quote_mode: false,
-        }
-    }
-
-    /// Checks if the tokenizer has no further input. (Note that even if this
-    /// returns `false`, there may not be any _useful_ remaining input, because
-    /// it might be e.g. whitespace.)
-    pub fn at_end(&self) -> bool {
-        self.text.is_empty()
-    }
-
-    /// Advances the tokenizer and returns the next thing found, or `None` if
-    /// we've exhausted the input.
-    ///
-    /// `skiperr` is normally `false`, which causes tokenization to treat an
-    /// error as the end of input. If `skiperr` is true, any error found will be
-    /// returned, and the tokenizer will be ready to continue past the error to
-    /// the best of its ability.
-    ///
-    /// When input is successfully tokenized, this returns `Some((token,
-    /// text))`, where `token` describes what was found, and `text` contains its
-    /// actual bytes.
-    pub fn next(&mut self, skiperr: bool) -> Option<(Token, &'a Value)> {
-        if self.text.is_empty() {
-            return None;
-        }
-        let (tok, from, to) = next(self.text, &mut self.quote_mode);
-        if !skiperr && tok == Token::Error {
-            return None;
-        }
-        self.text = to;
-        Some((tok, from))
-    }
-}
-
 /// Processes a value as a list, breaking it at (top-level) whitespace into a
 /// vector of element values.
 ///
@@ -372,26 +308,14 @@ impl<'a> Tokenizer<'a> {
 pub fn parse_list(v: &Value) -> Vec<OwnedValue> {
     let mut words = Vec::new();
 
-    let mut p = Tokenizer::new(v);
-    let mut rest = v;
-    while let Some((tok, from)) = p.next(false) {
-        rest = p.text;
-        if tok == Token::Word {
-            words.push(if from[0] == b'{' {
-                from[1..from.len() - 1].into()
+    for tok in Tokenizer::new(v) {
+        if let Token::Word(text) = tok {
+            words.push(if text[0] == b'{' {
+                text[1..text.len() - 1].into()
             } else {
-                from.into()
+                text.into()
             });
         }
-    }
-    skip_leading_whitespace(&mut rest);
-
-    if !rest.is_empty() {
-        words.push(if rest[0] == b'{' {
-            rest[1..rest.len() - 1].into()
-        } else {
-            rest.into()
-        });
     }
 
     words
@@ -412,21 +336,15 @@ pub enum FlowChange {
     Again,
 }
 
-/// Checks if `c` is a "special" character with syntactic significance. This has
-/// two different modes, controlled by `q`: when `q` is `true`, this checks for
-/// characters that are significant inside a quoted string; when `q` is `false`,
-/// this does the same check for _outside_ a quoted string.
-fn is_special(c: u8, q: bool) -> bool {
-    (!q && b"{};\r\n".contains(&c)) || b"$[]\"".contains(&c)
-}
+static C_END: [u8; 3] = *b"\n\r;";
+static C_SPECIAL: [u8; 4] = *b"$[]\"";
+
+#[inline(never)]
+fn is_splice_end(c: u8) -> bool { b"\t\n\r ;".contains(&c) }
 
 /// Checks if `c` is token-separating whitespace that can appear within a
 /// command, which in practice means space or tab.
 fn is_space(c: u8) -> bool { b" \t".contains(&c) }
-
-/// Checks if `c` is a command-terminating character, such as an end-of-line or
-/// a semicolon.
-fn is_end(c: u8) -> bool { b"\n\r;".contains(&c) }
 
 /// This is a little weird, but it's convenient below to indicate where we're
 /// treating a slice of bytes as a value vs just any old bytes.
@@ -462,106 +380,154 @@ fn skip_leading_whitespace(s: &mut &Value) {
     }
 }
 
-/// Basic step function for the tokenizer. Generally you won't need to call this
-/// directly.
-///
-/// `s` is the currently available input.
-///
-/// `quote_mode` indicates if we're starting within a quoted string. On return,
-/// it will be updated to indicate if the _next_ parse will start within a
-/// quoted string.
-///
-/// Returns a triple of `(token, text, rest)`, where `token` indicates the type
-/// of thing that was found, `text` is its contents, and `rest` is the remaining
-/// input to parse next.
-fn next<'data>(
-    mut s: &'data Value,
-    quote_mode: &mut bool,
-) -> (Token, &'data Value, &'data Value) {
-    if !*quote_mode {
-        skip_leading_whitespace(&mut s);
-    }
-
-    if !*quote_mode && s.first().map(|&c| is_end(c)).unwrap_or(false) {
-        let (before, after) = s.split_at(1);
-        return (Token::Cmd, before, after);
-    }
-
-    if s.first().map(|&c| c == b'$').unwrap_or(false) {
-        // variable token, must not start with a space or quote
-        if s.get(1).map(|&c| is_space(c) || c == b'"').unwrap_or(false) {
-            return (Token::Error, s, &[]);
-        }
-        let (subtoken, subused, subrest) = next(&s[1..], &mut false);
-        return (
-            if subtoken == Token::Word && *quote_mode { Token::Part } else { subtoken },
-            &s[..subused.len() + 1],
-            subrest,
-        );
-    }
-
-    let i = if let Some((&open, after)) = s.split_first() {
-        if open == b'[' || (!*quote_mode && open == b'{') {
-            // interleaving pairs are not welcome, but it simplifies the code
-            let close = if open == b'[' { b']' } else { b'}' };
-            let mut depth = 1;
-            s.iter().enumerate().position(|(i, &c)| {
-                if depth == 0 {
-                    return true;
-                }
-
-                if i > 0 && c == open {
-                    depth += 1;
-                } else if c == close {
-                    depth -= 1;
-                }
-                false
-            }).unwrap_or(s.len())
-        } else if open == b'"' {
-            *quote_mode = !*quote_mode;
-
-            // *from = *to = s + 1;
-            let from = &[];
-            let to = after;
-
-            if *quote_mode {
-                // We have just _entered_ a quoted string.
-                return (Token::Part, from, to);
-            }
-            // Otherwise, we are exiting a quoted string.
-
-            // Character immediately after the quote must be space or
-            // terminator.
-            let token = if to.is_empty() || (!is_space(to[0]) && !is_end(to[0])) {
-                Token::Error
-            } else {
-                Token::Word
-            };
-            return (token, from, to);
-        } else if open == b']' || open == b'}' {
-            // unbalanced bracket or brace
-            return (Token::Error, s, &[]);
-        } else {
-            s.iter().position(|&c| (!*quote_mode && is_space(c))
-                              || is_special(c, *quote_mode))
-                .unwrap_or(s.len())
-        }
-    } else {
-        0
-    };
-    let (from, to) = s.split_at(i);
-    let Some(&first) = to.first() else {
-        return (Token::Error, from, to);
-    };
-    let token = if *quote_mode {
-        Token::Part
-    } else if is_space(first) || is_end(first) {
-        Token::Word
-    } else {
-        Token::Part
-    };
-    (token, from, to)
+pub struct Tokenizer<'a> {
+    input: &'a [u8],
+    quote: bool,
 }
+
+impl<'a> Tokenizer<'a> {
+    pub fn new(input: &'a [u8]) -> Self {
+        Self { input, quote: false }
+    }
+
+    pub fn at_end(&self) -> bool {
+        self.input.is_empty()
+    }
+}
+
+impl<'a> Iterator for Tokenizer<'a> {
+    type Item = Token<'a>;
+
+    fn next(&mut self) -> Option<Token<'a>> {
+        // We are whitespace insensitive ... except inside a quoted string.
+        if !self.quote {
+            skip_leading_whitespace(&mut self.input);
+        }
+
+        // Separate first character and handle end-of-input.
+        let Some((&first, rest)) = self.input.split_first() else {
+            return if self.quote {
+                Some(Token::Error)
+            }  else {
+                None
+            };
+        };
+
+        // Detect, and skip, command separators.
+        if C_END.contains(&first) {
+            self.input = rest;
+            return Some(Token::CmdSep);
+        }
+
+        let taken = match (first, rest.first(), self.quote) {
+            // Characters that cannot legally appear at the end of input.
+            (b'$' | b'[' | b'{', None, _) => {
+                self.input = rest;
+                return Some(Token::Error);
+            }
+            // Characters that cannot appear at the start of a word, outside of
+            // quote mode.
+            (b']', _, _) | (b'}', _, false) => {
+                self.input = rest;
+                return Some(Token::Error);
+            }
+            // Characters that cannot follow a dollar sign
+            (b'$', Some(b' ' | b'"'), _) => {
+                self.input = rest;
+                return Some(Token::Error);
+            }
+            // Variable name.
+            (b'$', Some(_), _) => {
+                let mut subtok = Tokenizer::new(rest);
+                match subtok.next() {
+                    Some(Token::Word(name)) => {
+                        let (name, rest) = self.input.split_at(name.len() + 1);
+                        self.input = rest;
+                        return Some(if self.quote {
+                            Token::Part(name)
+                        } else {
+                            Token::Word(name)
+                        });
+                    }
+                    Some(Token::Part(name)) => {
+                        let (name, rest) = self.input.split_at(name.len() + 1);
+                        self.input = rest;
+                        return Some(Token::Part(name));
+                    }
+                    _ => {
+                        self.input = rest;
+                        return Some(Token::Error);
+                    }
+                }
+            }
+            (b'[', _, _) | (b'{', _, false) => {
+                let last = if first == b'[' { b']' } else { b'}' };
+                let mut depth = 0;
+                let p = self.input.iter().position(|&c| {
+                    if c == first {
+                        depth += 1;
+                    } else if c == last {
+                        depth -= 1;
+                    }
+                    depth == 0
+                });
+                match p {
+                    Some(p) => p + 1,
+                    None => {
+                        self.input = &[];
+                        return Some(Token::Error);
+                    }
+                }
+            }
+            (b'"', nxt, _) => {
+                self.quote = !self.quote;
+                self.input = rest;
+
+                if self.quote {
+                    // New quoted string. Return an empty part as a hack to
+                    // restart tokenization with the quote flag on.
+                    return Some(Token::Part(b""));
+                } else {
+                    // Leaving a quoted string.
+                    return Some(match nxt {
+                        None => Token::Word(b""),
+                        Some(c) if is_splice_end(*c) => Token::Word(b""),
+                        _ => Token::Error,
+                    });
+                }
+            }
+            _ => {
+                // Gonna try and lex a normal everyday word. We will include
+                // characters as long as they are not significant in our mode,
+                // which means stopping at whitespace outside of quotes, and
+                // _not_ stopping at whitespace inside.
+                //
+                // Note that we are splitting the input, _not_ rest, because we
+                // want to include the leading character.
+                self.input.iter().position(|c| {
+                    C_SPECIAL.contains(c)
+                        || (!self.quote && (b"{}".contains(c) || is_splice_end(*c)))
+                }).unwrap_or(self.input.len())
+            }
+        };
+        let (word, rest) = self.input.split_at(taken);
+        self.input = rest;
+        if self.quote || !self.input.first().map(|&c| is_splice_end(c)).unwrap_or(true) {
+            Some(Token::Part(word))
+        } else {
+            Some(Token::Word(word))
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Token<'a> {
+    CmdSep,
+    Word(&'a [u8]),
+    Part(&'a [u8]),
+    Error,
+}
+
 
 /// A variable in a scope.
 struct Var {
@@ -673,7 +639,6 @@ fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowCh
     let body = mem::take(&mut args[3]);
     let params = mem::take(&mut args[2]);
     let name = &args[1];
-    let body = add_newline(body);
 
     let parsed_params = parse_list(&params);
 
@@ -711,12 +676,11 @@ fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChan
     // We always arrive at the top of this loop while expecting a condition,
     // either just after the initial "if", or after an "elseif".
     while i < args.len() {
-        let cond = add_newline(mem::take(&mut args[i]));
+        let cond = mem::take(&mut args[i]);
         let cond = int(&tcl.eval(&cond)?) != 0;
 
         if cond {
             let branch = mem::take(&mut args[i + 1]);
-            let branch = add_newline(branch);
             return tcl.eval(&branch);
         }
 
@@ -725,7 +689,7 @@ fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChan
         if let Some(next) = args.get(i) {
             match &**next {
                 b"else" => {
-                    let branch = add_newline(mem::take(&mut args[i + 1]));
+                    let branch = mem::take(&mut args[i + 1]);
                     return tcl.eval(&branch);
                 }
                 b"elseif" => {
@@ -744,9 +708,9 @@ fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChan
 
 /// Implementation of the `while` standard command.
 fn cmd_while(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
-    let body = add_newline(mem::take(&mut args[2]));
+    let body = mem::take(&mut args[2]);
 
-    let cond = add_newline(mem::take(&mut args[1]));
+    let cond = mem::take(&mut args[1]);
 
     debug!("while body = {:?}", String::from_utf8_lossy(&body));
     loop {

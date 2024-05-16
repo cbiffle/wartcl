@@ -19,21 +19,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             Err(e) => return Err(e.into()),
         }
 
+        println!("got char: {inp:#x}");
+
         buf.push(inp);
+
+        println!("there are now {} chars", buf.len());
 
         let mut p = Tokenizer::new(&buf);
 
-        while let Some((tok, from)) = p.next(true) {
+        while let Some(tok) = p.next() {
+            println!("-- tok {tok:?}");
+
             if tok == Token::Error && !p.at_end() {
                 buf.clear();
                 break;
             }
 
-            if tok == Token::Cmd && !from.is_empty() {
+            if tok == Token::CmdSep {
+                println!(">>> {buf:?}");
                 let r = tcl.eval(&buf);
                 match r {
                     Err(e) => {
-                        print!("{e:?}");
+                        println!("{e:?}");
                     }
                     Ok(result) => {
                         println!("{}", String::from_utf8_lossy(&result));
