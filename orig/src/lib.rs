@@ -24,8 +24,14 @@ pub fn create() -> Handle {
 
 impl Handle {
     pub fn eval(&mut self, program: &CStr) -> c_int {
+        // partcl uses pointer-length pairs, but often passes them in a way that
+        // requires the length to include the trailing NUL (i.e. strlen+1), but
+        // sometimes passes them such that they do not. The execution of its
+        // parser _depends on this behavior_ so it's important to preserve it
+        // here.
+        let all_bytes = program.to_bytes_with_nul();
         unsafe {
-            tcl_eval(self.0, program.as_ptr(), program.to_bytes().len())
+            tcl_eval(self.0, all_bytes.as_ptr() as *const c_char, all_bytes.len())
         }
     }
 }
