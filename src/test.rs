@@ -40,22 +40,27 @@ fn check_tokens(input: &[u8], expect: &[(Token, &[u8])]) {
     let mut found = 0;
     while let Some((tok, text)) = p.next(true) {
         found += 1;
-        let (ex_i, &(ex_tok, ex_text)) = expect.next()
-            .expect("more tokens in input than expected");
-        assert_eq!(tok, ex_tok,
-                   "wrong token for expected text at {ex_i}: {:?} (got: {:?})",
-                   String::from_utf8_lossy(ex_text),
-                   String::from_utf8_lossy(text));
+        let (ex_i, &(ex_tok, ex_text)) =
+            expect.next().expect("more tokens in input than expected");
+        assert_eq!(
+            tok,
+            ex_tok,
+            "wrong token for expected text at {ex_i}: {:?} (got: {:?})",
+            String::from_utf8_lossy(ex_text),
+            String::from_utf8_lossy(text)
+        );
         match tok {
             Token::Error => {
                 break; // ???
             }
             Token::Part | Token::Word => {
-                assert_eq!(text, ex_text,
-                        "got {:?}, expected {:?}",
-                        String::from_utf8_lossy(text),
-                        String::from_utf8_lossy(ex_text),
-                        );
+                assert_eq!(
+                    text,
+                    ex_text,
+                    "got {:?}, expected {:?}",
+                    String::from_utf8_lossy(text),
+                    String::from_utf8_lossy(ex_text),
+                );
             }
             Token::Cmd => (), // ???
         }
@@ -66,138 +71,405 @@ fn check_tokens(input: &[u8], expect: &[(Token, &[u8])]) {
     } else {
         println!("OK: {input:?}");
     }
-
 }
 
 #[test]
 fn test_0_lexer() {
     check_tokens(b"\n", &[(Token::Cmd, b"")]);
-    check_tokens(b";\n", &[
-        (Token::Cmd, b";"),
-        (Token::Cmd, b""),
-    ]);
-    check_tokens(b";;;  ;\n", &[
-        (Token::Cmd, b";"),
-        (Token::Cmd, b";"),
-        (Token::Cmd, b";"),
-        (Token::Cmd, b";"),
-        (Token::Cmd, b""),
-    ]);
+    check_tokens(b";\n", &[(Token::Cmd, b";"), (Token::Cmd, b"")]);
+    check_tokens(
+        b";;;  ;\n",
+        &[
+            (Token::Cmd, b";"),
+            (Token::Cmd, b";"),
+            (Token::Cmd, b";"),
+            (Token::Cmd, b";"),
+            (Token::Cmd, b""),
+        ],
+    );
 
     // Regular words
     check_tokens(b"foo\n", &[(Token::Word, b"foo"), (Token::Cmd, b"")]);
-    check_tokens(b"foo bar\n", &[(Token::Word, b"foo"), (Token::Word, b"bar"), (Token::Cmd, b"")]);
-    check_tokens(b"foo bar baz\n", &[(Token::Word, b"foo"), (Token::Word, b"bar"), (Token::Word, b"baz"), (Token::Cmd,
-                                                                                                           b"")]);
+    check_tokens(
+        b"foo bar\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"bar"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo bar baz\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"bar"),
+            (Token::Word, b"baz"),
+            (Token::Cmd, b""),
+        ],
+    );
     /* Imbalanced braces/brackets */
     check_tokens(b"foo ]\n", &[(Token::Word, b"foo"), (Token::Error, b"")]);
     check_tokens(b"foo }\n", &[(Token::Word, b"foo"), (Token::Error, b"")]);
 
     /* Grouping */
-    check_tokens(b"foo {bar baz}\n", &[(Token::Word, b"foo"), (Token::Word, b"{bar baz}"), (Token::Cmd, b"")]);
-    check_tokens(b"foo {bar {baz} {q u x}}\n", &[(Token::Word, b"foo"), (Token::Word,
-                                                                         b"{bar {baz} {q u x}}"), (Token::Cmd, b"")]);
-    check_tokens(b"foo {bar {baz} [q u x]}\n", &[(Token::Word, b"foo"), (Token::Word,
-                                                                         b"{bar {baz} [q u x]}"), (Token::Cmd, b"")]);
-    check_tokens(b"foo {bar $baz [q u x]}\n", &[(Token::Word, b"foo"), (Token::Word,
-                                                                        b"{bar $baz [q u x]}"), (Token::Cmd, b"")]);
-    check_tokens(b"foo {bar \" baz}\n", &[(Token::Word, b"foo"), (Token::Word, b"{bar \" baz}"), (Token::Cmd,
-                                                                                                  b"")]);
-    check_tokens(b"foo {\n\tbar\n}\n", &[(Token::Word, b"foo"), (Token::Word, b"{\n\tbar\n}"), (Token::Cmd,
-                                                                                                b"")]);
+    check_tokens(
+        b"foo {bar baz}\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"{bar baz}"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo {bar {baz} {q u x}}\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"{bar {baz} {q u x}}"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo {bar {baz} [q u x]}\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"{bar {baz} [q u x]}"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo {bar $baz [q u x]}\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"{bar $baz [q u x]}"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo {bar \" baz}\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"{bar \" baz}"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo {\n\tbar\n}\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"{\n\tbar\n}"),
+            (Token::Cmd, b""),
+        ],
+    );
     /* Substitution */
-    check_tokens(b"foo [bar baz]\n", &[(Token::Word, b"foo"), (Token::Word, b"[bar baz]"), (Token::Cmd, b"")]);
-    check_tokens(b"foo [bar {baz}]\n", &[(Token::Word, b"foo"), (Token::Word, b"[bar {baz}]"), (Token::Cmd,
-                                                                                                b"")]);
-    check_tokens(b"foo $bar $baz\n", &[
+    check_tokens(
+        b"foo [bar baz]\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"[bar baz]"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo [bar {baz}]\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"[bar {baz}]"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo $bar $baz\n",
+        &[
             (Token::Word, b"foo"),
             (Token::Word, b"$bar"),
             (Token::Word, b"$baz"),
             (Token::Cmd, b""),
-    ]);
-    check_tokens(b"foo $bar$baz\n", &[(Token::Word, b"foo"), (Token::Part, b"$bar"), (Token::Word, b"$baz"),
-    (Token::Cmd, b"")]);
-    check_tokens(b"foo ${bar baz}\n", &[(Token::Word, b"foo"), (Token::Word, b"${bar baz}"), (Token::Cmd,
-                                                                                              b"")]);
-    check_tokens(b"puts hello[\n]world\n", &[(Token::Word, b"puts"), (Token::Part, b"hello"), (Token::Part,
-                                                                                               b"[\n]"), (Token::Word, b"world"), (Token::Cmd, b"")]);
+        ],
+    );
+    check_tokens(
+        b"foo $bar$baz\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Part, b"$bar"),
+            (Token::Word, b"$baz"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo ${bar baz}\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Word, b"${bar baz}"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"puts hello[\n]world\n",
+        &[
+            (Token::Word, b"puts"),
+            (Token::Part, b"hello"),
+            (Token::Part, b"[\n]"),
+            (Token::Word, b"world"),
+            (Token::Cmd, b""),
+        ],
+    );
     /* Quotes */
-    check_tokens(b"\"\"\n", &[
-        (Token::Part, b""),
-        (Token::Word, b""),
-        (Token::Cmd, b""),
-    ]);
+    check_tokens(
+        b"\"\"\n",
+        &[(Token::Part, b""), (Token::Word, b""), (Token::Cmd, b"")],
+    );
     check_tokens(b"\"\"\"\"\n", &[(Token::Part, b""), (Token::Error, b"")]);
-    check_tokens(b"foo \"bar baz\"\n", &[(Token::Word, b"foo"), (Token::Part, b""), (Token::Part, b"bar baz"),
-    (Token::Word, b""), (Token::Cmd, b"")]);
-    check_tokens(b"foo \"bar $b[a z]\" qux\n", &[(Token::Word, b"foo"), (Token::Part, b""), (Token::Part, b"bar "), (Token::Part, b"$b"), (Token::Part, b"[a z]"), (Token::Word, b""), (Token::Word, b"qux"),
-    (Token::Cmd, b"")]);
-    check_tokens(b"foo \"bar baz\" \"qux quz\"\n", &[(Token::Word, b"foo"), (Token::Part, b""), (Token::Part,
-                                                                                                 b"bar baz"), (Token::Word, b""), (Token::Part, b""), (Token::Part, b"qux quz"), (Token::Word, b""),
-                                                                                                 (Token::Cmd, b"")]);
-    check_tokens(b"\"{\" \"$a$b\"\n", &[(Token::Part, b""), (Token::Part, b"{"), (Token::Word, b""), (Token::Part, b""),
-    (Token::Part, b"$a"), (Token::Part, b"$b"), (Token::Word, b""), (Token::Cmd, b"")]);
+    check_tokens(
+        b"foo \"bar baz\"\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Part, b""),
+            (Token::Part, b"bar baz"),
+            (Token::Word, b""),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo \"bar $b[a z]\" qux\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Part, b""),
+            (Token::Part, b"bar "),
+            (Token::Part, b"$b"),
+            (Token::Part, b"[a z]"),
+            (Token::Word, b""),
+            (Token::Word, b"qux"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"foo \"bar baz\" \"qux quz\"\n",
+        &[
+            (Token::Word, b"foo"),
+            (Token::Part, b""),
+            (Token::Part, b"bar baz"),
+            (Token::Word, b""),
+            (Token::Part, b""),
+            (Token::Part, b"qux quz"),
+            (Token::Word, b""),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"\"{\" \"$a$b\"\n",
+        &[
+            (Token::Part, b""),
+            (Token::Part, b"{"),
+            (Token::Word, b""),
+            (Token::Part, b""),
+            (Token::Part, b"$a"),
+            (Token::Part, b"$b"),
+            (Token::Word, b""),
+            (Token::Cmd, b""),
+        ],
+    );
 
-    check_tokens(b"\"{\" \"$a\"$b\n", &[
-        (Token::Part, b""),
-        (Token::Part, b"{"),
-        (Token::Word, b""),
-        (Token::Part, b""),
-        (Token::Part, b"$a"),
-        (Token::Error, b""),
-    ]);
-    check_tokens(b"\"$a + $a = ?\"\n", &[
-        (Token::Part, b""),
-        (Token::Part, b"$a"),
-        (Token::Part, b" + "),
-        (Token::Part, b"$a"),
-        (Token::Part, b" = ?"),
-        (Token::Word, b""),
-        (Token::Cmd, b""),
-    ]);
+    check_tokens(
+        b"\"{\" \"$a\"$b\n",
+        &[
+            (Token::Part, b""),
+            (Token::Part, b"{"),
+            (Token::Word, b""),
+            (Token::Part, b""),
+            (Token::Part, b"$a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"\"$a + $a = ?\"\n",
+        &[
+            (Token::Part, b""),
+            (Token::Part, b"$a"),
+            (Token::Part, b" + "),
+            (Token::Part, b"$a"),
+            (Token::Part, b" = ?"),
+            (Token::Word, b""),
+            (Token::Cmd, b""),
+        ],
+    );
 
     /* Variables */
-    check_tokens(b"puts $ a\n", &[(Token::Word, b"puts"), (Token::Error, b"")]);
-    check_tokens(b"puts $\"a b\"\n", &[(Token::Word, b"puts"), (Token::Error, b"")]);
-    check_tokens(b"puts $$foo\n", &[(Token::Word, b"puts"), (Token::Word, b"$$foo"), (Token::Cmd, b"")]);
-    check_tokens(b"puts ${a b}\n", &[(Token::Word, b"puts"), (Token::Word, b"${a b}"), (Token::Cmd, b"")]);
-    check_tokens(b"puts $[a b]\n", &[(Token::Word, b"puts"), (Token::Word, b"$[a b]"), (Token::Cmd, b"")]);
+    check_tokens(
+        b"puts $ a\n",
+        &[(Token::Word, b"puts"), (Token::Error, b"")],
+    );
+    check_tokens(
+        b"puts $\"a b\"\n",
+        &[(Token::Word, b"puts"), (Token::Error, b"")],
+    );
+    check_tokens(
+        b"puts $$foo\n",
+        &[
+            (Token::Word, b"puts"),
+            (Token::Word, b"$$foo"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"puts ${a b}\n",
+        &[
+            (Token::Word, b"puts"),
+            (Token::Word, b"${a b}"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"puts $[a b]\n",
+        &[
+            (Token::Word, b"puts"),
+            (Token::Word, b"$[a b]"),
+            (Token::Cmd, b""),
+        ],
+    );
     check_tokens(b"puts { \n", &[(Token::Word, b"puts"), (Token::Error, b"")]);
-    check_tokens(b"set a {\n\n", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-    check_tokens(b"puts {[}\n", &[(Token::Word, b"puts"), (Token::Word, b"{[}"), (Token::Cmd, b"")]);
-    check_tokens(b"puts [{]\n", &[(Token::Word, b"puts"), (Token::Word, b"[{]"), (Token::Cmd, b"")]);
-    check_tokens(b"puts {[}{]} \n", &[(Token::Word, b"puts"), (Token::Part, b"{[}"), (Token::Word, b"{]}"),
-    (Token::Cmd, b"")]);
+    check_tokens(
+        b"set a {\n\n",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"puts {[}\n",
+        &[
+            (Token::Word, b"puts"),
+            (Token::Word, b"{[}"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"puts [{]\n",
+        &[
+            (Token::Word, b"puts"),
+            (Token::Word, b"[{]"),
+            (Token::Cmd, b""),
+        ],
+    );
+    check_tokens(
+        b"puts {[}{]} \n",
+        &[
+            (Token::Word, b"puts"),
+            (Token::Part, b"{[}"),
+            (Token::Word, b"{]}"),
+            (Token::Cmd, b""),
+        ],
+    );
 
-  /* Strings without trailing ~zero~newline */
-  check_tokens(b"a", &[(Token::Error, b"a")]);
-  check_tokens(b"ab", &[(Token::Error, b"a")]);
-  check_tokens(b"abc", &[(Token::Error, b"a")]);
-  check_tokens(b"abc ", &[(Token::Word, b"abc"), (Token::Error, b"")]);
-  check_tokens(b"abc foo", &[(Token::Word, b"abc"), (Token::Error, b"")]);
-  check_tokens(b"abc foo\n", &[(Token::Word, b"abc"), (Token::Word, b"foo"), (Token::Cmd, b"")]);
+    /* Strings without trailing ~zero~newline */
+    check_tokens(b"a", &[(Token::Error, b"a")]);
+    check_tokens(b"ab", &[(Token::Error, b"a")]);
+    check_tokens(b"abc", &[(Token::Error, b"a")]);
+    check_tokens(b"abc ", &[(Token::Word, b"abc"), (Token::Error, b"")]);
+    check_tokens(b"abc foo", &[(Token::Word, b"abc"), (Token::Error, b"")]);
+    check_tokens(
+        b"abc foo\n",
+        &[
+            (Token::Word, b"abc"),
+            (Token::Word, b"foo"),
+            (Token::Cmd, b""),
+        ],
+    );
 
-  check_tokens(b"s", &[(Token::Error, b"s")]);
-  check_tokens(b"se", &[(Token::Error, b"s")]);
-  check_tokens(b"set", &[(Token::Error, b"s")]);
-  check_tokens(b"set ", &[(Token::Word, b"set"), (Token::Error, b"")]);
-  check_tokens(b"set a", &[(Token::Word, b"set"), (Token::Error, b"")]);
-  check_tokens(b"set a ", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\n", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\nh", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\nhe", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\nhel", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\nhell", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\nhello", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\nhello\n", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\nhello\n}", &[(Token::Word, b"set"), (Token::Word, b"a"), (Token::Error, b"")]);
-  check_tokens(b"set a {\nhello\n}\n", &[
-        (Token::Word, b"set"),
-        (Token::Word, b"a"),
-        (Token::Word, b"{\nhello\n}"),
-        (Token::Cmd, b""),
-    ]);
+    check_tokens(b"s", &[(Token::Error, b"s")]);
+    check_tokens(b"se", &[(Token::Error, b"s")]);
+    check_tokens(b"set", &[(Token::Error, b"s")]);
+    check_tokens(b"set ", &[(Token::Word, b"set"), (Token::Error, b"")]);
+    check_tokens(b"set a", &[(Token::Word, b"set"), (Token::Error, b"")]);
+    check_tokens(
+        b"set a ",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\n",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\nh",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\nhe",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\nhel",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\nhell",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\nhello",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\nhello\n",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\nhello\n}",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Error, b""),
+        ],
+    );
+    check_tokens(
+        b"set a {\nhello\n}\n",
+        &[
+            (Token::Word, b"set"),
+            (Token::Word, b"a"),
+            (Token::Word, b"{\nhello\n}"),
+            (Token::Cmd, b""),
+        ],
+    );
 }
 
 #[track_caller]
@@ -216,23 +488,27 @@ fn check_eval(tcl: Option<&mut Env>, s: &[u8], expected: &[u8]) {
 
     match tcl.eval(s) {
         Err(FlowChange::Error) => {
-            panic!("eval returned error: {:?}",
-                   String::from_utf8_lossy(s));
+            panic!("eval returned error: {:?}", String::from_utf8_lossy(s));
         }
         Ok(value) => {
-            assert_eq!(&*value, expected,
-                       "expected result {:?} but got {:?}",
-                       String::from_utf8_lossy(expected),
-                       String::from_utf8_lossy(&value));
+            assert_eq!(
+                &*value,
+                expected,
+                "expected result {:?} but got {:?}",
+                String::from_utf8_lossy(expected),
+                String::from_utf8_lossy(&value)
+            );
         }
         Err(other) => {
             panic!("eval returned unexpected result: {other:?}");
         }
     }
 
-    println!("OK: {:?} -> {:?}",
-             String::from_utf8_lossy(s),
-             String::from_utf8_lossy(expected));
+    println!(
+        "OK: {:?} -> {:?}",
+        String::from_utf8_lossy(s),
+        String::from_utf8_lossy(expected)
+    );
 }
 
 #[track_caller]
@@ -256,8 +532,7 @@ fn check_eval_err(tcl: Option<&mut Env>, s: &[u8], expected: FlowChange) {
 
     assert_eq!(tcl.eval(s), Err(expected.clone()));
 
-    println!("OK: {:?} -> !{expected:?}",
-             String::from_utf8_lossy(s));
+    println!("OK: {:?} -> !{expected:?}", String::from_utf8_lossy(s));
 }
 
 #[test]
@@ -278,7 +553,8 @@ fn test_1_subst() {
     check_eval_err(None, b"subst $foo", FlowChange::Error);
     check_eval(None, b"set foo {}; subst $foo", b"");
 
-    if false { // TODO
+    if false {
+        // TODO
         let mut tcl = Env::init();
         tcl.set_or_create_var((*b"foo").into(), (*b"bar").into());
         tcl.set_or_create_var((*b"bar").into(), (*b"baz").into());
@@ -299,15 +575,24 @@ fn test_1_subst() {
     check_eval(None, b"set a su; set b bst; $a$b Hello", b"Hello");
     /* This is an error in TCL, but works in Picol */
     check_eval(None, b"set foo {hello world}", b"hello world");
-    check_eval(None,
-               b"set foo {hello world}; set bar \"qux $foo\"; subst $foo$bar",
-               b"hello worldqux hello world");
-    check_eval(None, b"set a f; set b {o}; set $a$b$b [subst \"hello\"]; set foo",
-               b"hello");
+    check_eval(
+        None,
+        b"set foo {hello world}; set bar \"qux $foo\"; subst $foo$bar",
+        b"hello worldqux hello world",
+    );
+    check_eval(
+        None,
+        b"set a f; set b {o}; set $a$b$b [subst \"hello\"]; set foo",
+        b"hello",
+    );
     check_eval(None, b"set {a \"b\"} hello; subst ${a \"b\"}", b"hello");
     check_eval(None, b"set \"a b\" hello; subst ${a b}", b"hello");
 
-    check_eval(None, b"set q {\"}; set msg hello; subst $q$msg$q", b"\"hello\"");
+    check_eval(
+        None,
+        b"set q {\"}; set msg hello; subst $q$msg$q",
+        b"\"hello\"",
+    );
     check_eval(None, b"set q {\"}; subst $q[]hello[]$q", b"\"hello\"");
     check_eval(None, b"set x {\n\thello\n}", b"\n\thello\n");
 
@@ -324,15 +609,24 @@ fn test_2_flow() {
     // string -- I choose empty string.
     check_eval(None, b"if {> 1 2} {puts A}", b"");
 
-    check_eval(None,
-               b"set x 0; if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
-               b"A");
-    check_eval(None,
-               b"set x 1; if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
-               b"B");
-    check_eval(None,
-               b"set x 2; if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
-               b"C");
+    check_eval(
+        None,
+        b"set x 0; \
+            if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
+        b"A",
+    );
+    check_eval(
+        None,
+        b"set x 1; \
+            if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
+        b"B",
+    );
+    check_eval(
+        None,
+        b"set x 2; \
+            if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
+        b"C",
+    );
 
     // DEVIATION: partcl returns 0 from while loops, standard says empty string;
     // I choose empty string.
@@ -345,47 +639,79 @@ fn test_2_flow() {
     // loop exited with "break" now returns the empty string like in normal
     // Tcl.
     // DEVIATION: again with the undefined variables
-    check_eval(None, b"set x 0; while {== 1 1} {set x [+ $x 1]; if {== $x 5} {break}}",
-               b"");
+    check_eval(
+        None,
+        b"set x 0; while {== 1 1} {set x [+ $x 1]; if {== $x 5} {break}}",
+        b"",
+    );
     // DEVIATION: partcl is able to ignore the fact that this ends in RETURN
     // because of the lack of type safety on return values; I need to handle it
     // explicitly here, which I think is a better test anyway.
     // DEVIATION: again with the undefined variables
     check_eval_err(
         None,
-        b"set x 0; while {== 1 1} {set x [+ $x 1]; if {!= $x 5} {continue} ; return foo}",
-        FlowChange::Return((*b"foo").into()));
+        b"set x 0; \
+            while {== 1 1} {set x [+ $x 1]; \
+            if {!= $x 5} {continue} ; \
+            return foo}",
+        FlowChange::Return((*b"foo").into()),
+    );
     check_eval(None, b"proc foo {} { subst hello }; foo", b"hello");
     check_eval(None, b"proc five {} { + 2 3}; five", b"5");
     check_eval(None, b"proc foo {a} { subst $a }; foo hello", b"hello");
-    check_eval(None, b"proc foo {} { subst hello; return A; return B;}; foo", b"A");
-    check_eval(None, b"set x 1; proc two {} { set x 2;}; two; subst $x", b"1");
+    check_eval(
+        None,
+        b"proc foo {} { subst hello; return A; return B;}; foo",
+        b"A",
+    );
+    check_eval(
+        None,
+        b"set x 1; proc two {} { set x 2;}; two; subst $x",
+        b"1",
+    );
     /* Example from Picol */
-    check_eval(None, b"proc fib {x} { if {<= $x 1} {return 1} \
+    check_eval(
+        None,
+        b"proc fib {x} { if {<= $x 1} {return 1} \
                else { return [+ [fib [- $x 1]] [fib [- $x 2]]]}}; fib 20",
-               b"10946");
+        b"10946",
+    );
 
     let mut tcl = Env::init();
-    check_eval(Some(&mut tcl), b"proc square {x} { * $x $x }; square 7", b"49");
+    check_eval(
+        Some(&mut tcl),
+        b"proc square {x} { * $x $x }; square 7",
+        b"49",
+    );
     check_eval(Some(&mut tcl), b"set a 4", b"4");
     check_eval(Some(&mut tcl), b"square $a", b"16");
     check_eval(Some(&mut tcl), b"subst \"$a[]*$a ?\"", b"4*4 ?");
-    check_eval(Some(&mut tcl), b"subst \"I can compute that $a[]x$a = [square $a]\"",
-               b"I can compute that 4x4 = 16");
+    check_eval(
+        Some(&mut tcl),
+        b"subst \"I can compute that $a[]x$a = [square $a]\"",
+        b"I can compute that 4x4 = 16",
+    );
     check_eval(Some(&mut tcl), b"set a 1", b"1");
     // DEVIATION: partcl's version of this test relied on either while or if's
     // tendency to return "0" (not clear which tbh).
-    check_eval(Some(&mut tcl), b"while {<= $a 10} { puts \"$a [== $a 5]\";\
+    check_eval(
+        Some(&mut tcl),
+        b"while {<= $a 10} { puts \"$a [== $a 5]\";\
                if {== $a 5} { puts {Missing five!}; set a [+ $a 1]; \
                continue;}; puts \"I can compute that $a[]x$a = [square \
                $a]\" ; set a [+ $a 1]}",
-               b"");
+        b"",
+    );
     drop(tcl);
 
     // Weirdly, the partcl tests don't have any tests for procs with >2
     // arguments. Let's fix that.
-    check_eval(None, b"proc sum_of_squares {x y} { + [* $x $x] [* $y $y] }; sum_of_squares 9 10",
-               b"181");
+    check_eval(
+        None,
+        b"proc sum_of_squares {x y} { + [* $x $x] [* $y $y] }; \
+            sum_of_squares 9 10",
+        b"181",
+    );
 }
 
 #[test]
@@ -407,15 +733,11 @@ fn test_3_math() {
     check_eval(None, b"set a 5;set b 7; subst [- [* 4 [+ $a $b]] 6]", b"42");
 
     // New operations not available in partcl:
-    check_eval_new(
-        b"incr x",
-        b"1",
-    );
+    check_eval_new(b"incr x", b"1");
 
     check_eval_new(
         b"incr x
           incr x",
         b"2",
     );
-
 }
