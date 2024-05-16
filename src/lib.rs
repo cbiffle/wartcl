@@ -62,6 +62,11 @@ macro_rules! debug {
 
 mod cmd;
 
+#[cfg(feature = "i64")]
+pub type Int = i64;
+#[cfg(not(feature = "i64"))]
+pub type Int = i32;
+
 /// Interpreter state.
 ///
 /// To run a program, you need one of these. You can create one using
@@ -239,7 +244,7 @@ impl Env {
 /// - Allows a + sign on positive numbers in addition to a - for negative.
 /// - Parses a number from 0 or more valid ASCII digits.
 /// - Ignores any trailing non-digit characters (whitespace or otherwise).
-pub fn int(mut v: &Value) -> i32 {
+pub fn int(mut v: &Value) -> Int {
     // In partcl, this was just a call to atoi. Rust's standard library
     // integer-string conversions are all _nice_ and have _error checking_ and
     // _Unicode handling_ and stuff like that. It adds about a kiB.
@@ -264,22 +269,22 @@ pub fn int(mut v: &Value) -> i32 {
 
             let c = c.to_ascii_lowercase();
             value = (value * 16) + if c >= b'a' {
-                (c - b'a') as i32 + 10
+                (c - b'a') as Int + 10
             } else {
-                (c - b'0') as i32
+                (c - b'0') as Int
             };
         }
     } else {
         for &c in v {
             if !c.is_ascii_digit() { break; }
 
-            value = (value * 10) + (c - b'0') as i32;
+            value = (value * 10) + (c - b'0') as Int;
         }
     }
     if negative { -value } else { value }
 }
 
-pub fn int_value(x: i32) -> OwnedValue {
+pub fn int_value(x: Int) -> OwnedValue {
     let mut text = Vec::new();
     let negative = x < 0;
     let mut c = x.abs();

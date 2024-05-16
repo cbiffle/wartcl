@@ -12,6 +12,7 @@ proc = []
 arithmetic = []
 comparison = []
 incr = []
+i64 = []
 
 [dependencies]
 

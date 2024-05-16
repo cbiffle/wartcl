@@ -154,17 +154,17 @@ pub fn cmd_math(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
         b"/" => a / b,
 
         #[cfg(feature = "comparison")]
-        b">" => (a > b) as i32,
+        b">" => (a > b) as Int,
         #[cfg(feature = "comparison")]
-        b">=" => (a >= b) as i32,
+        b">=" => (a >= b) as Int,
         #[cfg(feature = "comparison")]
-        b"<" => (a < b) as i32,
+        b"<" => (a < b) as Int,
         #[cfg(feature = "comparison")]
-        b"<=" => (a <= b) as i32,
+        b"<=" => (a <= b) as Int,
         #[cfg(feature = "comparison")]
-        b"==" => (a == b) as i32,
+        b"==" => (a == b) as Int,
         #[cfg(feature = "comparison")]
-        b"!=" => (a != b) as i32,
+        b"!=" => (a != b) as Int,
 
         _ => panic!(),
     };
