@@ -40,14 +40,12 @@ pub fn cmd_puts(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 #[cfg(feature = "proc")]
 pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
     let body = mem::take(&mut args[3]);
-    let params = mem::take(&mut args[2]);
     let name = &args[1];
 
-    let parsed_params = parse_list(&params);
+    let parsed_params = parse_list(&args[2]);
 
     tcl.register(name, 0, move |tcl, act_args| {
-        let boxed_scope = Box::new(mem::take(&mut tcl.env));
-        tcl.env.parent = Some(boxed_scope);
+        tcl.env.parent = Some(Box::new(mem::take(&mut tcl.env)));
 
         for (i, param) in parsed_params.iter().enumerate() {
             let v = mem::take(act_args.get_mut(i + 1).ok_or(FlowChange::Error)?);
