@@ -75,17 +75,17 @@ pub struct Env {
 }
 
 impl Env {
-    /// Creates a new `Tcl` environment and initializes it with the standard
+    /// Creates a new `Env` environment and initializes it with the standard
     /// bundled command set before returning it.
     pub fn init() -> Self {
-        let mut tcl = Self::default();
+        let mut env = Self::default();
 
-        cmd::register_all(&mut tcl);
+        cmd::register_all(&mut env);
 
-        tcl
+        env
     }
 
-    /// Adds a command to `tcl`, under the name `name`, expecting `arity`
+    /// Adds a command to `self`, under the name `name`, expecting `arity`
     /// arguments (including its own name!), and implemented by the Rust
     /// function `function`.
     ///
@@ -102,7 +102,7 @@ impl Env {
         }));
     }
 
-    /// Evaluates the source code `s` in terms of the interpreter `tcl`.
+    /// Evaluates the source code `s` in terms of this interpreter.
     ///
     /// On normal completion, returns the result. Otherwise, returns the change
     /// in flow control.
@@ -584,7 +584,7 @@ struct Cmd {
     /// Implementation of the command, as a boxed (reference-counted) closure.
     ///
     /// This is an `Rc` instead of `Box` because we need to be able to separate
-    /// its lifetime from the lifetime of the overall `Tcl` struct during
+    /// its lifetime from the lifetime of the overall `Env` struct during
     /// evaluation, lest we wind up with aliasing. (This also ensures a command
     /// keeps working even if it's deleted or replaced during execution.)
     function: Rc<FnDyn>,
