@@ -216,12 +216,17 @@ impl Env {
     /// Sets a variable named `name` to `value` in the current innermost scope,
     /// creating it if it doesn't exist.
     pub fn set_or_create_var(&mut self, name: OwnedValue, value: OwnedValue) {
-        let var = match self.find_var_mut(&name) {
-            Some(v) => v,
-            None => self.scope.add_var(name),
-        };
-
-        var.value = value;
+        match self.find_var_mut(&name) {
+            Some(v) => v.value = value,
+            None => {
+                let next = self.scope.vars.take();
+                self.scope.vars = Some(Box::new(Var {
+                    name,
+                    value,
+                    next,
+                }));
+            }
+        }
     }
 
     /// Gets a copy of the contents of an existing variable, or returns
@@ -584,24 +589,6 @@ struct Scope {
     /// If `proc` support is disabled, this is implicitly always `None`.
     #[cfg(feature = "proc")]
     parent: Option<Box<Scope>>,
-}
-
-impl Scope {
-    /// Creates a new `Var` with the given `name` and attaches it at the front
-    /// of `env`'s var chain.
-    ///
-    /// This operation is unconditional. If there's already a `Var` named `name`
-    /// in `env`, the new one will shadow it. (You almost never want that.)
-    ///
-    /// Returns a reference to the newly created `Var` so it can be filled in.
-    fn add_var(&mut self, name: OwnedValue) -> &mut Var {
-        let var = Box::new(Var {
-            name,
-            value: Box::new([]),
-            next: self.vars.take(),
-        });
-        self.vars.insert(var)
-    }
 }
 
 /// Shorthand for the type of our boxed command closures.
