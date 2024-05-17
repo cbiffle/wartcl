@@ -3,7 +3,7 @@ use std::{error::Error, io::{ErrorKind, Read}};
 use wartcl::*;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut tcl = Env::init();
+    let mut tcl = Env::default();
 
     let mut stdin = std::io::stdin();
     let mut buf = vec![];

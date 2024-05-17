@@ -45,7 +45,7 @@ pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
     let parsed_params = parse_list(&args[2]);
 
     tcl.register(name, 0, move |tcl, act_args| {
-        tcl.env.parent = Some(Box::new(mem::take(&mut tcl.env)));
+        tcl.scope.parent = Some(Box::new(mem::take(&mut tcl.scope)));
 
         for (i, param) in parsed_params.iter().enumerate() {
             let v = mem::take(act_args.get_mut(i + 1).ok_or(FlowChange::Error)?);
@@ -53,7 +53,7 @@ pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
         }
         let r = tcl.eval(&body);
 
-        tcl.env = *tcl.env.parent.take().unwrap();
+        tcl.scope = *tcl.scope.parent.take().unwrap();
 
         match r {
             Err(FlowChange::Return(v)) | Ok(v) => Ok(v),

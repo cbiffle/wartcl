@@ -409,7 +409,7 @@ fn check_eval(tcl: Option<&mut Env>, s: &[u8], expected: &[u8]) {
     let tcl = if let Some(outer) = tcl {
         outer
     } else {
-        local.insert(Env::init())
+        local.insert(Env::default())
     };
 
     match tcl.eval(s) {
@@ -453,7 +453,7 @@ fn check_eval_err(tcl: Option<&mut Env>, s: &[u8], expected: FlowChange) {
     let tcl = if let Some(outer) = tcl {
         outer
     } else {
-        local.insert(Env::init())
+        local.insert(Env::default())
     };
 
     assert_eq!(tcl.eval(s), Err(expected.clone()));
@@ -481,7 +481,7 @@ fn test_1_subst() {
 
     if false {
         // TODO
-        let mut tcl = Env::init();
+        let mut tcl = Env::default();
         tcl.set_or_create_var((*b"foo").into(), (*b"bar").into());
         tcl.set_or_create_var((*b"bar").into(), (*b"baz").into());
         tcl.set_or_create_var((*b"baz").into(), (*b"Hello").into());
@@ -603,7 +603,7 @@ fn test_2_flow() {
         b"10946",
     );
 
-    let mut tcl = Env::init();
+    let mut tcl = Env::default();
     check_eval(
         Some(&mut tcl),
         b"proc square {x} { * $x $x }; square 7",

@@ -3,7 +3,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 pub fn benchmark(c: &mut Criterion) {
     c.benchmark_group("eval(subst hello)")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::Env::init();
+            let mut tcl = wartcl::Env::default();
             b.iter(move || {
                 let r = tcl.eval( b"subst hello");
                 assert!(r.is_ok());
@@ -18,7 +18,7 @@ pub fn benchmark(c: &mut Criterion) {
         });
     c.benchmark_group("nested-ifs")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::Env::init();
+            let mut tcl = wartcl::Env::default();
             b.iter(move || {
                 let r = tcl.eval( b"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}");
                 assert!(r.is_ok());
@@ -33,7 +33,7 @@ pub fn benchmark(c: &mut Criterion) {
         });
     c.benchmark_group("complex-expr")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::Env::init();
+            let mut tcl = wartcl::Env::default();
             b.iter(move || {
                 let r = tcl.eval(b"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]");
                 assert!(r.is_ok());
@@ -48,7 +48,7 @@ pub fn benchmark(c: &mut Criterion) {
         });
     c.benchmark_group("call-proc")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::Env::init();
+            let mut tcl = wartcl::Env::default();
             tcl.eval( b"proc testproc {x y z} { }").unwrap();
             b.iter(move || {
                 let r = tcl.eval(b"testproc a b c");
@@ -65,7 +65,7 @@ pub fn benchmark(c: &mut Criterion) {
         });
     c.benchmark_group("recursive-fib-5")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::Env::init();
+            let mut tcl = wartcl::Env::default();
             tcl.eval(b"\
                 proc fib {x} { \
                     if {<= $x 1} {return 1} else { \
@@ -97,7 +97,7 @@ pub fn benchmark(c: &mut Criterion) {
     // our i32 integer type.
     c.benchmark_group("iterative-fib-45")
         .bench_function("wartcl", |b| {
-            let mut tcl = wartcl::Env::init();
+            let mut tcl = wartcl::Env::default();
             tcl.eval(b"\
                 proc fib {x} { \
                     set a 0; \

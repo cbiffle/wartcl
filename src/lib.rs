@@ -62,34 +62,37 @@ macro_rules! debug {
 
 mod cmd;
 
+/// Integer type used internally for arithmetic.
 #[cfg(feature = "i64")]
 pub type Int = i64;
+
+/// Integer type used internally for arithmetic.
 #[cfg(not(feature = "i64"))]
 pub type Int = i32;
 
 /// Interpreter state.
 ///
-/// To run a program, you need one of these. You can create one using
-/// `init()`, and then call `eval` as many times as required.
+/// To run a program, you need one of these. You can create one containing the
+/// standard set of commands using `Env::default()`, and then call `eval` as
+/// many times as required.
 ///
 /// Dropping it will deallocate all associated state.
-#[derive(Default)]
 pub struct Env {
-    env: Scope,
+    scope: Scope,
     cmds: Option<Box<Cmd>>,
 }
 
-impl Env {
+impl Default for Env {
     /// Creates a new `Env` environment and initializes it with the standard
     /// bundled command set before returning it.
-    pub fn init() -> Self {
-        let mut env = Self::default();
-
+    fn default() -> Self {
+        let mut env = Env { scope: Scope::default(), cmds: None };
         cmd::register_all(&mut env);
-
         env
     }
+}
 
+impl Env {
     /// Adds a command to `self`, under the name `name`, expecting `arity`
     /// arguments (including its own name!), and implemented by the Rust
     /// function `function`.
@@ -97,7 +100,13 @@ impl Env {
     /// If a command can handle various numbers of arguments, the `arity` here
     /// should be 0, and the command is responsible for checking argument count
     /// itself.
-    pub fn register(&mut self, name: &Value, arity: usize, function: impl Fn(&mut Env, &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> + 'static) {
+    pub fn register(
+        &mut self,
+        name: &Value,
+        arity: usize,
+        function: impl Fn(&mut Env, &mut [OwnedValue])
+            -> Result<OwnedValue, FlowChange> + 'static,
+    ) {
         let next = self.cmds.take();
         self.cmds = Some(Box::new(Cmd {
             name: name.into(),
@@ -112,47 +121,62 @@ impl Env {
     /// On normal completion, returns the result. Otherwise, returns the change
     /// in flow control.
     pub fn eval(&mut self, s: &Value) -> Result<OwnedValue, FlowChange> {
-        debug!("eval({:?})", String::from_utf8_lossy(s));
-        let mut p = Tokenizer::new(s);
+        // Current string being accumulated out of pieces. We retain this vector
+        // across pieces, clear()ing it each time, to reuse its allocation.
+        let mut strpieces = Vec::new();
+        // Current command being accumulated out of strings. We retain this
+        // vector across commands, clear()ing it each time, to reuse its
+        // allocation.
+        let mut command = Vec::new();
 
-        let mut cur = Vec::new();
-        let mut list = Vec::new();
-
+        // Each command we evaluate stores its result here, so that we can
+        // return the final one.
         let mut last_result = None;
+
+        let mut p = Tokenizer::new(s);
 
         loop {
             let tok = p.next();
             match tok {
-                Some(Token::Error) => {
-                    return Err(FlowChange::Error);
-                }
+                // Bounce on any parse failure, aborting execution.
+                Some(Token::Error) => return Err(FlowChange::Error),
 
+                // Accumulate string pieces.
                 Some(Token::Word(w) | Token::Part(w)) => {
-                    cur.push(self.subst(w)?);
+                    strpieces.push(self.subst(w)?);
+                    // Word(_) marks the _end_ of a piece, so transfer it to the
+                    // command.
                     if matches!(tok, Some(Token::Word(_))) {
-                        list.push(flatten_string(&cur));
-                        cur.clear();
+                        command.push(flatten_string(&strpieces));
+                        strpieces.clear();
                     }
                 }
 
+                // Process commands either at a command separator, or the end of
+                // the input string.
                 Some(Token::CmdSep(_)) | None => {
-                    if !cur.is_empty() {
-                        return Err(FlowChange::Error);
-                    }
+                    // If we've gotten Parts but not a Word to terminate the
+                    // final string, this indicates a bug in this function.
+                    debug_assert!(strpieces.is_empty());
 
-                    if let Some(cmdname) = list.first() {
-                        debug!("Cmd with proper list");
-                        debug!("finding: {}/{}", String::from_utf8_lossy(&cmdname), n);
+                    // Run non-empty command, treating an empty command as a
+                    // no-op.
+                    if let Some(cmdname) = command.first() {
                         let mut cmd = self.cmds.as_deref();
                         let mut found = false;
 
                         while let Some(c) = cmd.take() {
-                            if &c.name == cmdname && (c.arity == 0 || c.arity == list.len()) {
+                            if &c.name == cmdname
+                                && (c.arity == 0 || c.arity == command.len())
+                            {
                                 found = true;
-                                debug!("calling: {}/{}", String::from_utf8_lossy(&c.name), c.arity);
+                                // Command implementations are in Rcs, so that
+                                // we can retain an executing command even if it
+                                // changes the interpreter's internal state.
+                                // Clone this Rc to un-borrow the interpreter.
                                 let f = Rc::clone(&c.function);
-                                last_result = Some(f(self, &mut list)?);
-                                list.clear();
+                                last_result = Some(f(self, &mut command)?);
+                                command.clear();
                                 break;
                             }
 
@@ -163,10 +187,10 @@ impl Env {
                             return Err(FlowChange::Error);
                         }
 
-                        debug!("normal");
-                        debug_assert!(list.is_empty());
+                        debug_assert!(command.is_empty());
                     }
 
+                    // Distinguish end-of-input from command separator:
                     if tok.is_none() {
                         break;
                     }
@@ -174,12 +198,12 @@ impl Env {
             }
         }
 
-        debug!("end eval");
+        // If we haven't run any commands, we'll produce the empty string.
         Ok(last_result.unwrap_or_default())
     }
 
-    fn find_var(&mut self, name: &Value) -> Option<&mut Var> {
-        let mut var = self.env.vars.as_mut();
+    fn find_var_mut(&mut self, name: &Value) -> Option<&mut Var> {
+        let mut var = self.scope.vars.as_mut();
         while let Some(v) = var.take() {
             if &*v.name == name {
                 return Some(v);
@@ -192,18 +216,18 @@ impl Env {
     /// Sets a variable named `name` to `value` in the current innermost scope,
     /// creating it if it doesn't exist.
     pub fn set_or_create_var(&mut self, name: OwnedValue, value: OwnedValue) {
-        let var = match self.find_var(&name) {
+        let var = match self.find_var_mut(&name) {
             Some(v) => v,
-            None => self.env.add_var(name),
+            None => self.scope.add_var(name),
         };
 
         var.value = value;
     }
 
     /// Gets a copy of the contents of an existing variable, or returns
-    /// `Err(Error)` if it doesn't exist.
+    /// `None` if it doesn't exist.
     pub fn get_existing_var(&mut self, name: &Value) -> Option<OwnedValue> {
-        let var = self.find_var(name)?;
+        let var = self.find_var_mut(name)?;
 
         Some(var.value.clone())
     }
@@ -219,9 +243,19 @@ impl Env {
             None => Ok(empty()),
             Some((b'{', b"")) => Err(FlowChange::Error),
             Some((b'{', rest)) => {
+                // TODO: picked up this shortcut behavior from partcl... this
+                // assumes that last char is `}` because the tokenizer will have
+                // run before we got here, and the tokenizer validates that.
+                // Should this function also validate that? I'm not sure.
                 Ok(rest[..rest.len() - 1].into())
             }
             Some((b'$', name)) => {
+                // TODO: this behavior is from partcl, and doesn't match real
+                // Tcl for code like:
+                //
+                //      set a b; set b 3; puts $[set a]
+                //
+                // Which in real Tcl prints "$b" and in partcl prints "3"
                 let mut subcmd = b"set ".to_vec();
                 subcmd.extend_from_slice(name);
                 self.eval(&subcmd)
@@ -342,10 +376,6 @@ static C_SPECIAL: [u8; 4] = *b"$[]\"";
 #[inline(never)]
 fn is_splice_end(c: u8) -> bool { b"\t\n\r ;".contains(&c) }
 
-/// Checks if `c` is token-separating whitespace that can appear within a
-/// command, which in practice means space or tab.
-fn is_space(c: u8) -> bool { b" \t".contains(&c) }
-
 /// This is a little weird, but it's convenient below to indicate where we're
 /// treating a slice of bytes as a value vs just any old bytes.
 pub type Value = [u8];
@@ -371,8 +401,8 @@ pub fn empty() -> OwnedValue {
 
 /// Updates `s` by stripping off leading (horizontal) whitespace characters.
 fn skip_leading_whitespace(s: &mut &Value) {
-    while let Some((&first, next)) = s.split_first() {
-        if is_space(first) {
+    while let Some((first, next)) = s.split_first() {
+        if b" \t".contains(first) {
             *s = next;
         } else {
             break;
