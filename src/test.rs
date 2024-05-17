@@ -63,11 +63,17 @@ fn check_tokens(input: &[u8], expect: &[Token]) {
 #[test]
 fn test_0_lexer2() {
     check_tokens(b"", &[]);
-    check_tokens(b"\n", &[Token::CmdSep]);
-    check_tokens(b";\n", &[Token::CmdSep, Token::CmdSep]);
+    check_tokens(b"\n", &[Token::CmdSep(b'\n')]);
+    check_tokens(b";\n", &[Token::CmdSep(b';'), Token::CmdSep(b'\n')]);
     check_tokens(
         b";;;  ;\n",
-        &[Token::CmdSep; 5],
+        &[
+            Token::CmdSep(b';'),
+            Token::CmdSep(b';'),
+            Token::CmdSep(b';'),
+            Token::CmdSep(b';'),
+            Token::CmdSep(b'\n'),
+        ],
     );
 
     // Regular words
@@ -84,7 +90,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"bar"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -93,7 +99,7 @@ fn test_0_lexer2() {
             Token::Word(b"foo"),
             Token::Word(b"bar"),
             Token::Word(b"baz"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     // Variable substitution: easy case, whitespcae separated, basically just
@@ -112,7 +118,7 @@ fn test_0_lexer2() {
             Token::Word(b"foo"),
             Token::Part(b"$bar"),
             Token::Word(b"$baz"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -120,7 +126,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"${bar baz}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
 
@@ -136,7 +142,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"{bar baz}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -144,7 +150,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"{bar {baz} {q u x}}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -152,7 +158,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"{bar {baz} [q u x]}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -160,7 +166,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"{bar $baz [q u x]}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -168,7 +174,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"{bar \" baz}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -176,7 +182,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"{\n\tbar\n}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     // Substitution
@@ -185,7 +191,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"[bar baz]"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -193,7 +199,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"[bar {baz}]"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -202,7 +208,7 @@ fn test_0_lexer2() {
             Token::Word(b"foo"),
             Token::Word(b"$bar"),
             Token::Word(b"$baz"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -211,7 +217,7 @@ fn test_0_lexer2() {
             Token::Word(b"foo"),
             Token::Part(b"$bar"),
             Token::Word(b"$baz"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -219,7 +225,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"foo"),
             Token::Word(b"${bar baz}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -229,7 +235,7 @@ fn test_0_lexer2() {
             Token::Part(b"hello"),
             Token::Part(b"[\n]"),
             Token::Word(b"world"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     /* Quotes */
@@ -239,7 +245,7 @@ fn test_0_lexer2() {
     );
     check_tokens(
         b"\"\"\n",
-        &[Token::Part(b""), Token::Word(b""), Token::CmdSep],
+        &[Token::Part(b""), Token::Word(b""), Token::CmdSep(b'\n')],
     );
     check_tokens(
         b"\"",
@@ -256,7 +262,7 @@ fn test_0_lexer2() {
             Token::Part(b""),
             Token::Part(b"bar baz"),
             Token::Word(b""),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -269,7 +275,7 @@ fn test_0_lexer2() {
             Token::Part(b"[a z]"),
             Token::Word(b""),
             Token::Word(b"qux"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -282,7 +288,7 @@ fn test_0_lexer2() {
             Token::Part(b""),
             Token::Part(b"qux quz"),
             Token::Word(b""),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -295,7 +301,7 @@ fn test_0_lexer2() {
             Token::Part(b"$a"),
             Token::Part(b"$b"),
             Token::Word(b""),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
 
@@ -319,7 +325,7 @@ fn test_0_lexer2() {
             Token::Part(b"$a"),
             Token::Part(b" = ?"),
             Token::Word(b""),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
 
@@ -337,7 +343,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"puts"),
             Token::Word(b"$$foo"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -345,7 +351,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"puts"),
             Token::Word(b"${a b}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -353,7 +359,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"puts"),
             Token::Word(b"$[a b]"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(b"puts { \n", &[Token::Word(b"puts"), Token::Error]);
@@ -370,7 +376,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"puts"),
             Token::Word(b"{[}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -378,7 +384,7 @@ fn test_0_lexer2() {
         &[
             Token::Word(b"puts"),
             Token::Word(b"[{]"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
@@ -387,7 +393,7 @@ fn test_0_lexer2() {
             Token::Word(b"puts"),
             Token::Part(b"{[}"),
             Token::Word(b"{]}"),
-            Token::CmdSep,
+            Token::CmdSep(b'\n'),
         ],
     );
 }

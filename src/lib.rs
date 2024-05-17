@@ -135,7 +135,7 @@ impl Env {
                     }
                 }
 
-                Some(Token::CmdSep) | None => {
+                Some(Token::CmdSep(_)) | None => {
                     if !cur.is_empty() {
                         return Err(FlowChange::Error);
                     }
@@ -416,7 +416,7 @@ impl<'a> Iterator for Tokenizer<'a> {
         // Detect, and skip, command separators.
         if C_END.contains(&first) {
             self.input = rest;
-            return Some(Token::CmdSep);
+            return Some(Token::CmdSep(first));
         }
 
         let taken = match (first, rest.first(), self.quote) {
@@ -522,7 +522,7 @@ impl<'a> Iterator for Tokenizer<'a> {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Token<'a> {
-    CmdSep,
+    CmdSep(u8),
     Word(&'a [u8]),
     Part(&'a [u8]),
     Error,

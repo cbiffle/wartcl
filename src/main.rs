@@ -21,6 +21,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         buf.push(inp);
 
+        if inp != b'\r' && inp != b'\n' {
+            continue;
+        }
+
         let mut p = Tokenizer::new(&buf);
 
         while let Some(tok) = p.next() {
@@ -29,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 break;
             }
 
-            if tok == Token::CmdSep {
+            if matches!(tok, Token::CmdSep(b'\r' | b'\n')) {
                 let r = tcl.eval(&buf);
                 match r {
                     Err(e) => {
