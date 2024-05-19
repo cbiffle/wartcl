@@ -71,18 +71,18 @@ pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
 /// `if {condition} {body} elseif {condition2} {body2} ...`
 /// `if {condition} {body} elseif {condition2} {body2} ... else {body3}`
 pub fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+    let mut branch = None;
+
     // Skip the first argument.
     let mut i = 1;
-
     // We always arrive at the top of this loop while expecting a condition,
     // either just after the initial "if", or after an "elseif".
     while i < args.len() {
-        let cond = mem::take(&mut args[i]);
-        let cond = int(&tcl.eval(&cond)?) != 0;
+        let cond = int(&tcl.eval(&args[i])?) != 0;
 
         if cond {
-            let branch = mem::take(&mut args[i + 1]);
-            return tcl.eval(&branch);
+            branch = Some(&*args[i + 1]);
+            break;
         }
 
         i += 2;
@@ -90,8 +90,8 @@ pub fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Flow
         if let Some(next) = args.get(i) {
             match &**next {
                 b"else" => {
-                    let branch = mem::take(&mut args[i + 1]);
-                    return tcl.eval(&branch);
+                    branch = Some(&*args[i + 1]);
+                    break;
                 }
                 b"elseif" => {
                     // Return error if elseif is the last token.
@@ -104,7 +104,7 @@ pub fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Flow
             }
         }
     }
-    Ok(empty())
+    tcl.eval(branch.unwrap_or_default())
 }
 
 /// Implementation of the `while` standard command.
