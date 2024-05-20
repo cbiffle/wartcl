@@ -410,9 +410,9 @@ pub fn parse_list(v: &Val) -> Vec<Val> {
     for tok in Tokenizer::new(v) {
         if let Token::Word(text) = tok {
             words.push(Val::slice_ref(v, if text[0] == b'{' {
-                text[1..text.len() - 1].into()
+                &text[1..text.len() - 1]
             } else {
-                text.into()
+                text
             }));
         }
     }
@@ -452,6 +452,9 @@ pub type OwnedValue = Box<Value>;
 /// `v` concatenated together, with no intervening bytes. This operation is
 /// useful for pasting strings together during substitution handling.
 fn flatten_string(v: &[Val]) -> Val {
+    if v.len() == 1 {
+        return v[0].clone();
+    }
     let len = v.iter().map(|component| component.len()).sum::<usize>();
     let mut out = Vec::with_capacity(len);
     for component in v {
