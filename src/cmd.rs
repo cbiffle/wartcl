@@ -1,10 +1,10 @@
 use super::*;
 
 /// Implementation of the `set` standard command.
-pub fn cmd_set(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+pub fn cmd_set(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     let name = mem::take(&mut args[1]);
     if let Some(new_value) = args.get_mut(2) {
-        tcl.set_or_create_var(name, new_value.clone());
+        tcl.set_or_create_var(&name, new_value.clone());
         Ok(mem::take(new_value))
     } else {
         tcl.get_existing_var(&name).ok_or(FlowChange::Error)
@@ -12,14 +12,14 @@ pub fn cmd_set(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Flo
 }
 
 /// Implementation of the `subst` standard command.
-pub fn cmd_subst(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+pub fn cmd_subst(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     let s = &args[1];
     tcl.subst(s)
 }
 
 #[cfg(feature = "incr")]
-pub fn cmd_incr(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
-    let name = mem::take(&mut args[1]);
+pub fn cmd_incr(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
+    let name = &args[1];
     let current_int = tcl.get_existing_var(&name)
         .map(|v| int(&v))
         .unwrap_or(0);
@@ -30,14 +30,14 @@ pub fn cmd_incr(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
 
 /// Implementation of the `puts` standard command.
 #[cfg(any(test, feature = "std"))]
-pub fn cmd_puts(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+pub fn cmd_puts(_tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     println!("{}", String::from_utf8_lossy(&args[1]));
     Ok(empty())
 }
 
 /// Implementation of the `proc` standard command.
 #[cfg(feature = "proc")]
-pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+pub fn cmd_proc(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     let body = mem::take(&mut args[3]);
     let name = &args[1];
 
@@ -48,7 +48,7 @@ pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
 
         for (i, param) in parsed_params.iter().enumerate() {
             let v = mem::take(act_args.get_mut(i + 1).ok_or(FlowChange::Error)?);
-            tcl.set_or_create_var(param.clone(), v);
+            tcl.set_or_create_var(&param, v);
         }
         let r = tcl.eval(&body);
 
@@ -69,7 +69,7 @@ pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
 /// `if {condition} {body} else {body2}`
 /// `if {condition} {body} elseif {condition2} {body2} ...`
 /// `if {condition} {body} elseif {condition2} {body2} ... else {body3}`
-pub fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+pub fn cmd_if(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     let mut branch = None;
 
     // Skip the first argument.
@@ -80,7 +80,7 @@ pub fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Flow
         let cond = int(&tcl.eval(&args[i])?) != 0;
 
         if cond {
-            branch = Some(&*args[i + 1]);
+            branch = Some(mem::take(&mut args[i + 1]));
             break;
         }
 
@@ -89,7 +89,7 @@ pub fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Flow
         if let Some(next) = args.get(i) {
             match &**next {
                 b"else" => {
-                    branch = Some(&*args[i + 1]);
+                    branch = Some(mem::take(&mut args[i + 1]));
                     break;
                 }
                 b"elseif" => {
@@ -103,11 +103,11 @@ pub fn cmd_if(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Flow
             }
         }
     }
-    tcl.eval(branch.unwrap_or_default())
+    tcl.eval(&branch.unwrap_or_default())
 }
 
 /// Implementation of the `while` standard command.
-pub fn cmd_while(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+pub fn cmd_while(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     let body = mem::take(&mut args[2]);
 
     let cond = mem::take(&mut args[1]);
@@ -132,7 +132,7 @@ pub fn cmd_while(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 /// Implementation of the standard math commands; parses its first argument to
 /// choose the operation.
 #[cfg(any(feature = "arithmetic", feature = "comparison"))]
-pub fn cmd_math(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+pub fn cmd_math(_tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     let bval = &args[2];
     let aval = &args[1];
     let opval = &args[0];
@@ -171,7 +171,7 @@ pub fn cmd_math(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 
 /// Type of a command implemented with a stateless function pointer, as opposed
 /// to a general closure.
-type StaticCmd = fn(&mut Env, &mut [OwnedValue]) -> Result<OwnedValue, FlowChange>;
+type StaticCmd = fn(&mut Env, &mut [Val]) -> Result<Val, FlowChange>;
 
 static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
     // So far I consider these commands universal, and haven't felt the need to
@@ -225,6 +225,6 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
 /// The exact commands registered depend on the build options.
 pub fn register_all(env: &mut Env) {
     for &(name, arity, function) in STANDARD_COMMANDS {
-        env.register(name, arity, function);
+        env.register(&Val::from_static(name), arity, function);
     }
 }

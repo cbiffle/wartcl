@@ -402,11 +402,6 @@ fn test_0_lexer2() {
 
 #[track_caller]
 fn check_eval(tcl: Option<&mut Env>, s: &[u8], expected: &[u8]) {
-    // Ensure termination
-    let mut s = s.to_vec();
-    s.push(b'\n');
-    let s = &s[..];
-
     let mut local = None;
     let tcl = if let Some(outer) = tcl {
         outer
@@ -414,7 +409,7 @@ fn check_eval(tcl: Option<&mut Env>, s: &[u8], expected: &[u8]) {
         local.insert(Env::default())
     };
 
-    match tcl.eval(s) {
+    match tcl.eval(&Val::copy(s)) {
         Err(FlowChange::Error) => {
             panic!("eval returned error: {:?}", String::from_utf8_lossy(s));
         }
@@ -446,11 +441,6 @@ fn check_eval_new(s: &[u8], expected: &[u8]) {
 
 #[track_caller]
 fn check_eval_err(tcl: Option<&mut Env>, s: &[u8], expected: FlowChange) {
-    // Ensure termination
-    let mut s = s.to_vec();
-    s.push(b'\n');
-    let s = &s[..];
-
     let mut local = None;
     let tcl = if let Some(outer) = tcl {
         outer
@@ -458,7 +448,7 @@ fn check_eval_err(tcl: Option<&mut Env>, s: &[u8], expected: FlowChange) {
         local.insert(Env::default())
     };
 
-    assert_eq!(tcl.eval(s), Err(expected.clone()));
+    assert_eq!(tcl.eval(&Val::copy(s)), Err(expected.clone()));
 
     println!("OK: {:?} -> !{expected:?}", String::from_utf8_lossy(s));
 }
@@ -484,9 +474,9 @@ fn test_1_subst() {
     if false {
         // TODO
         let mut tcl = Env::default();
-        tcl.set_or_create_var((*b"foo").into(), (*b"bar").into());
-        tcl.set_or_create_var((*b"bar").into(), (*b"baz").into());
-        tcl.set_or_create_var((*b"baz").into(), (*b"Hello").into());
+        tcl.set_or_create_var(&(b"foo"[..]).into(), (b"bar"[..]).into());
+        tcl.set_or_create_var(&(b"bar"[..]).into(), (b"baz"[..]).into());
+        tcl.set_or_create_var(&(b"baz"[..]).into(), (b"Hello"[..]).into());
         check_eval(Some(&mut tcl), b"subst $foo", b"bar");
         check_eval(Some(&mut tcl), b"subst $foo[]$foo", b"barbar");
         check_eval(Some(&mut tcl), b"subst $$foo", b"baz");
@@ -596,7 +586,7 @@ fn test_2_flow() {
             while {== 1 1} {set x [+ $x 1]; \
             if {!= $x 5} {continue} ; \
             return foo}",
-        FlowChange::Return((*b"foo").into()),
+        FlowChange::Return((b"foo"[..]).into()),
     );
     check_eval(None, b"proc foo {} { subst hello }; foo", b"hello");
     check_eval(None, b"proc five {} { + 2 3}; five", b"5");
@@ -688,7 +678,7 @@ fn make_env_with_output_collector() -> (Env, Rc<RefCell<Vec<u8>>>) {
     let mut e = Env::default();
     let output = Rc::new(RefCell::new(vec![]));
     let o = output.clone();
-    e.register(b"puts", 2, move |_, args| {
+    e.register(&Val::from_static(b"puts"), 2, move |_, args| {
         let mut v = o.borrow_mut();
         v.extend_from_slice(&args[1]);
         v.push(b'\n');

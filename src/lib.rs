@@ -12,14 +12,16 @@
 //! including exposing custom commands. Here's a toy example:
 //!
 //! ```rust
+//! use wartcl::Val;
+//!
 //! let mut tcl = wartcl::Env::default();
 //!
-//! tcl.register(b"my-custom-command", 1, |_, _| {
+//! tcl.register(&Val::from_static(b"my-custom-command"), 1, |_, _| {
 //!     println!("hi!");
 //!     Ok(wartcl::empty())
 //! });
 //!
-//! match tcl.eval(b"my-custom-command\n") {
+//! match tcl.eval(&Val::from_static(b"my-custom-command\n")) {
 //!     Ok(_) => {
 //!         // the script worked!
 //!     }
@@ -98,13 +100,13 @@
 //! quantum physics.
 
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
-#![forbid(unsafe_code)]
 
 extern crate alloc;
 use core::mem;
 use alloc::rc::Rc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+pub use heap::Val;
 
 /// Internal macro to make it easier to comment/uncomment a bunch of printlns
 /// all in one place.
@@ -112,6 +114,7 @@ macro_rules! debug {
     ($($x:tt)*) => { /* println!($($x)*) */ };
 }
 
+mod heap;
 mod cmd;
 
 /// Integer type used internally for arithmetic.
@@ -154,14 +157,14 @@ impl Env {
     /// itself.
     pub fn register(
         &mut self,
-        name: &Value,
+        name: &Val,
         arity: usize,
-        function: impl Fn(&mut Env, &mut [OwnedValue])
-            -> Result<OwnedValue, FlowChange> + 'static,
+        function: impl Fn(&mut Env, &mut [Val])
+            -> Result<Val, FlowChange> + 'static,
     ) {
         let next = self.cmds.take();
         self.cmds = Some(Box::new(Cmd {
-            name: name.into(),
+            name: name.clone(),
             arity,
             function: Rc::new(function),
             next,
@@ -172,7 +175,7 @@ impl Env {
     ///
     /// On normal completion, returns the result. Otherwise, returns the change
     /// in flow control.
-    pub fn eval(&mut self, s: &Value) -> Result<OwnedValue, FlowChange> {
+    pub fn eval(&mut self, s: &Val) -> Result<Val, FlowChange> {
         // Current string being accumulated out of pieces. We retain this vector
         // across pieces, clear()ing it each time, to reuse its allocation.
         let mut strpieces = Vec::new();
@@ -195,11 +198,11 @@ impl Env {
 
                 // Accumulate string pieces.
                 Some(Token::Word(w) | Token::Part(w)) => {
-                    strpieces.push(self.subst(w)?);
+                    strpieces.push(self.subst(&Val::slice_ref(s, w))?);
                     // Word(_) marks the _end_ of a piece, so transfer it to the
                     // command.
                     if matches!(tok, Some(Token::Word(_))) {
-                        command.push(flatten_string(mem::take(&mut strpieces)));
+                        command.push(flatten_string(&mem::take(&mut strpieces)));
                     }
                 }
 
@@ -253,10 +256,10 @@ impl Env {
         Ok(last_result.unwrap_or_default())
     }
 
-    fn find_var_mut(&mut self, name: &Value) -> Option<&mut Var> {
+    fn find_var_mut(&mut self, name: &Val) -> Option<&mut Var> {
         let mut var = self.scope.vars.as_mut();
         while let Some(v) = var.take() {
-            if &*v.name == name {
+            if &v.name == name {
                 return Some(v);
             }
             var = v.next.as_mut();
@@ -266,13 +269,13 @@ impl Env {
 
     /// Sets a variable named `name` to `value` in the current innermost scope,
     /// creating it if it doesn't exist.
-    pub fn set_or_create_var(&mut self, name: OwnedValue, value: OwnedValue) {
-        match self.find_var_mut(&name) {
+    pub fn set_or_create_var(&mut self, name: &Val, value: Val) {
+        match self.find_var_mut(name) {
             Some(v) => v.value = value,
             None => {
                 let next = self.scope.vars.take();
                 self.scope.vars = Some(Box::new(Var {
-                    name,
+                    name: name.clone(),
                     value,
                     next,
                 }));
@@ -282,7 +285,7 @@ impl Env {
 
     /// Gets a copy of the contents of an existing variable, or returns
     /// `None` if it doesn't exist.
-    pub fn get_existing_var(&mut self, name: &Value) -> Option<OwnedValue> {
+    pub fn get_existing_var(&mut self, name: &Val) -> Option<Val> {
         let var = self.find_var_mut(name)?;
 
         Some(var.value.clone())
@@ -294,7 +297,7 @@ impl Env {
     /// Substitution steps include peeling the outer curly braces off a braced
     /// string, evaluating a square-bracketed subcommand, or processing a
     /// dollar-sign variable splice.
-    fn subst(&mut self, s: &Value) -> Result<OwnedValue, FlowChange> {
+    fn subst(&mut self, s: &Val) -> Result<Val, FlowChange> {
         match s.split_first() {
             None => Ok(empty()),
             Some((b'{', b"")) => Err(FlowChange::Error),
@@ -303,7 +306,7 @@ impl Env {
                 // assumes that last char is `}` because the tokenizer will have
                 // run before we got here, and the tokenizer validates that.
                 // Should this function also validate that? I'm not sure.
-                Ok(rest[..rest.len() - 1].into())
+                Ok(Val::slice_ref(s, &rest[..rest.len() - 1]))
             }
             Some((b'$', name)) => {
                 // TODO: this behavior is from partcl, and doesn't match real
@@ -312,14 +315,15 @@ impl Env {
                 //      set a b; set b 3; puts $[set a]
                 //
                 // Which in real Tcl prints "$b" and in partcl prints "3"
-                let mut subcmd = b"set ".to_vec();
+                let mut subcmd = Vec::with_capacity(name.len() + b"set ".len());
+                subcmd.extend_from_slice(b"set ");
                 subcmd.extend_from_slice(name);
-                self.eval(&subcmd)
+                self.eval(&subcmd.into())
             }
             Some((b'[', rest)) => {
-                self.eval(&rest[..rest.len() - 1])
+                self.eval(&Val::slice_ref(s, &rest[..rest.len() - 1]))
             }
-            _ => Ok(s.into()),
+            _ => Ok(s.clone()),
         }
     }
 }
@@ -334,7 +338,7 @@ impl Env {
 /// - Allows a + sign on positive numbers in addition to a - for negative.
 /// - Parses a number from 0 or more valid ASCII digits.
 /// - Ignores any trailing non-digit characters (whitespace or otherwise).
-pub fn int(mut v: &Value) -> Int {
+pub fn int(mut v: &[u8]) -> Int {
     // In partcl, this was just a call to atoi. Rust's standard library
     // integer-string conversions are all _nice_ and have _error checking_ and
     // _Unicode handling_ and stuff like that. It adds about a kiB.
@@ -379,7 +383,7 @@ pub fn int(mut v: &Value) -> Int {
 /// There is decimal formatting code in `core`, of course, but it just keeps
 /// getting bigger with every toolchain revision. So, we provide our own,
 /// optimized for size.
-pub fn int_value(x: Int) -> OwnedValue {
+pub fn int_value(x: Int) -> Val {
     let mut text = Vec::new();
     let negative = x < 0;
     let mut c = x.abs();
@@ -400,16 +404,16 @@ pub fn int_value(x: Int) -> OwnedValue {
 ///
 /// This follows normal Tcl-style list parsing rules, so "a" is a list of one
 /// element, "a b c" is a list of three, and "a {b c}" is a list of two.
-pub fn parse_list(v: &Value) -> Vec<OwnedValue> {
+pub fn parse_list(v: &Val) -> Vec<Val> {
     let mut words = Vec::new();
 
     for tok in Tokenizer::new(v) {
         if let Token::Word(text) = tok {
-            words.push(if text[0] == b'{' {
+            words.push(Val::slice_ref(v, if text[0] == b'{' {
                 text[1..text.len() - 1].into()
             } else {
                 text.into()
-            });
+            }));
         }
     }
 
@@ -424,7 +428,7 @@ pub enum FlowChange {
     Error,
     /// The command is asking to return from the current scope/procedure, with
     /// the given value.
-    Return(OwnedValue),
+    Return(Val),
     /// The command is asking to terminate the current innermost loop.
     Break,
     /// The command is asking to repeat the current innermost loop.
@@ -447,21 +451,18 @@ pub type OwnedValue = Box<Value>;
 /// Produces a newly allocated string value that contains all the elements of
 /// `v` concatenated together, with no intervening bytes. This operation is
 /// useful for pasting strings together during substitution handling.
-fn flatten_string(mut v: Vec<OwnedValue>) -> OwnedValue {
-    if v.len() == 1 {
-        return v.pop().unwrap();
-    }
+fn flatten_string(v: &[Val]) -> Val {
     let len = v.iter().map(|component| component.len()).sum::<usize>();
     let mut out = Vec::with_capacity(len);
-    for component in &v {
+    for component in v {
         out.extend_from_slice(component);
     }
     out.into()
 }
 
 /// Convenience function for getting an empty value.
-pub fn empty() -> OwnedValue {
-    Box::new([])
+pub fn empty() -> Val {
+    Val::new()
 }
 
 /// Updates `s` by stripping off leading (horizontal) whitespace characters.
@@ -630,9 +631,9 @@ pub enum Token<'a> {
 /// A variable in a scope.
 struct Var {
     /// Name of the variable, used to find it during search.
-    name: OwnedValue,
+    name: Val,
     /// Contents of the variable.
-    value: OwnedValue,
+    value: Val,
     /// Link to next variable in this scope, or `None` if this is the end of the
     /// chain.
     next: Option<Box<Var>>,
@@ -655,13 +656,13 @@ struct Scope {
 }
 
 /// Shorthand for the type of our boxed command closures.
-type FnDyn = dyn Fn(&mut Env, &mut [OwnedValue]) -> Result<OwnedValue, FlowChange>;
+type FnDyn = dyn Fn(&mut Env, &mut [Val]) -> Result<Val, FlowChange>;
 
 /// A command record. Each command that is registered gets one of these,
 /// assembled into a chain.
 struct Cmd {
     /// Name of the command, used for lookup.
-    name: OwnedValue,
+    name: Val,
     /// Number of arguments the command requires, or `0` if the command can take
     /// varying numbers of arguments. This affects lookup: `x y z` will only
     /// find a command named `"x"` if its `arity` is either 3 or 0.

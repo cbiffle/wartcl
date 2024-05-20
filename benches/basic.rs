@@ -1,11 +1,12 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use wartcl::Val;
 
 pub fn benchmark(c: &mut Criterion) {
     c.benchmark_group("eval(subst hello)")
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
             b.iter(move || {
-                let r = tcl.eval( b"subst hello");
+                let r = tcl.eval(&Val::from_static(b"subst hello"));
                 assert!(r.is_ok());
             })
         })
@@ -20,7 +21,7 @@ pub fn benchmark(c: &mut Criterion) {
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
             b.iter(move || {
-                let r = tcl.eval( b"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}");
+                let r = tcl.eval(&Val::from_static(b"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}"));
                 assert!(r.is_ok());
             })
         })
@@ -35,7 +36,7 @@ pub fn benchmark(c: &mut Criterion) {
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
             b.iter(move || {
-                let r = tcl.eval(b"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]");
+                let r = tcl.eval(&Val::from_static(b"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]"));
                 assert!(r.is_ok());
             })
         })
@@ -49,9 +50,9 @@ pub fn benchmark(c: &mut Criterion) {
     c.benchmark_group("call-proc")
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
-            tcl.eval( b"proc testproc {x y z} { }").unwrap();
+            tcl.eval(&Val::from_static(b"proc testproc {x y z} { }")).unwrap();
             b.iter(move || {
-                let r = tcl.eval(b"testproc a b c");
+                let r = tcl.eval(&Val::from_static(b"testproc a b c"));
                 assert!(r.is_ok());
             })
         })
@@ -66,14 +67,14 @@ pub fn benchmark(c: &mut Criterion) {
     c.benchmark_group("recursive-fib-5")
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
-            tcl.eval(b"\
+            tcl.eval(&Val::from_static(b"\
                 proc fib {x} { \
                     if {<= $x 1} {return 1} else { \
                         return [+ [fib [- $x 1]] [fib [- $x 2]]] \
                     } \
-                }").unwrap();
+                }")).unwrap();
             b.iter(move || {
-                let r = tcl.eval(b"fib 5");
+                let r = tcl.eval(&Val::from_static(b"fib 5"));
                 assert!(r.is_ok());
             })
         })
@@ -98,7 +99,7 @@ pub fn benchmark(c: &mut Criterion) {
     c.benchmark_group("iterative-fib-45")
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
-            tcl.eval(b"\
+            tcl.eval(&Val::from_static(b"\
                 proc fib {x} { \
                     set a 0; \
                     set b 1; \
@@ -108,9 +109,9 @@ pub fn benchmark(c: &mut Criterion) {
                         set b [+ $a $b]; \
                         set a $t \
                     }; return $a \
-                }").unwrap();
+                }")).unwrap();
             b.iter(move || {
-                let r = tcl.eval(b"fib 45");
+                let r = tcl.eval(&Val::from_static(b"fib 45"));
                 assert!(r.is_ok());
             })
         })
