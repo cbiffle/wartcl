@@ -135,13 +135,20 @@ pub type Int = i32;
 pub struct Env {
     scope: Scope,
     cmds: Option<Box<Cmd>>,
+    commandstack: Vec<Val>,
+    strpiecestack: Vec<Val>,
 }
 
 impl Default for Env {
     /// Creates a new `Env` environment and initializes it with the standard
     /// bundled command set before returning it.
     fn default() -> Self {
-        let mut env = Env { scope: Scope::default(), cmds: None };
+        let mut env = Env {
+            scope: Scope::default(),
+            cmds: None,
+            commandstack: vec![],
+            strpiecestack: vec![],
+        };
         cmd::register_all(&mut env);
         env
     }
@@ -159,7 +166,7 @@ impl Env {
         &mut self,
         name: Val,
         arity: usize,
-        function: impl Fn(&mut Env, &mut [Val])
+        function: impl Fn(&mut Env, usize)
             -> Result<Val, FlowChange> + 'static,
     ) {
         let next = self.cmds.take();
@@ -176,14 +183,17 @@ impl Env {
     /// On normal completion, returns the result. Otherwise, returns the change
     /// in flow control.
     pub fn eval(&mut self, s: Val) -> Result<Val, FlowChange> {
-        // Current string being accumulated out of pieces. We retain this vector
-        // across pieces, clear()ing it each time, to reuse its allocation.
-        let mut strpieces = Vec::new();
-        // Current command being accumulated out of strings. We retain this
-        // vector across commands, clear()ing it each time, to reuse its
-        // allocation.
-        let mut command = Vec::new();
+        let cmdframe = self.commandstack.len();
+        let strframe = self.strpiecestack.len();
+        let r = self.eval_(s);
+        self.commandstack.truncate(cmdframe);
+        self.strpiecestack.truncate(strframe);
+        r
+    }
 
+    fn eval_(&mut self, s: Val) -> Result<Val, FlowChange> {
+        let cmdframe = self.commandstack.len();
+        let strframe = self.strpiecestack.len();
         // Each command we evaluate stores its result here, so that we can
         // return the final one.
         let mut last_result = None;
@@ -202,11 +212,12 @@ impl Env {
                         DelayedEval::Ready(v) => v,
                         DelayedEval::EvalThis(v) => self.eval(v)?,
                     };
-                    strpieces.push(subst_result);
+                    self.strpiecestack.push(subst_result);
                     // Word(_) marks the _end_ of a piece, so transfer it to the
                     // command.
                     if matches!(tok, Some(Token::Word(_))) {
-                        command.push(flatten_string(&mem::take(&mut strpieces)));
+                        self.commandstack.push(flatten_string(&self.strpiecestack[strframe..]));
+                        self.strpiecestack.truncate(strframe);
                     }
                 }
 
@@ -215,17 +226,17 @@ impl Env {
                 Some(Token::CmdSep(_)) | None => {
                     // If we've gotten Parts but not a Word to terminate the
                     // final string, this indicates a bug in this function.
-                    debug_assert!(strpieces.is_empty());
+                    debug_assert!(self.strpiecestack.len() == strframe);
 
                     // Run non-empty command, treating an empty command as a
                     // no-op.
-                    if let Some(cmdname) = command.first() {
+                    if let Some(cmdname) = self.commandstack.get(cmdframe) {
                         let mut cmd = self.cmds.as_deref();
                         let mut found = false;
 
                         while let Some(c) = cmd.take() {
                             if &c.name == cmdname
-                                && (c.arity == 0 || c.arity == command.len())
+                                && (c.arity == 0 || c.arity == self.commandstack.len() - cmdframe)
                             {
                                 found = true;
                                 // Command implementations are in Rcs, so that
@@ -233,8 +244,8 @@ impl Env {
                                 // changes the interpreter's internal state.
                                 // Clone this Rc to un-borrow the interpreter.
                                 let f = Rc::clone(&c.function);
-                                last_result = Some(f(self, &mut command)?);
-                                command.clear();
+                                last_result = Some(f(self, cmdframe)?);
+                                self.commandstack.truncate(cmdframe);
                                 break;
                             }
 
@@ -245,7 +256,7 @@ impl Env {
                             return Err(FlowChange::Error);
                         }
 
-                        debug_assert!(command.is_empty());
+                        debug_assert!(self.commandstack.len() == cmdframe);
                     }
 
                     // Distinguish end-of-input from command separator:
@@ -668,7 +679,7 @@ struct Scope {
 }
 
 /// Shorthand for the type of our boxed command closures.
-type FnDyn = dyn Fn(&mut Env, &mut [Val]) -> Result<Val, FlowChange>;
+type FnDyn = dyn Fn(&mut Env, usize) -> Result<Val, FlowChange>;
 
 /// A command record. Each command that is registered gets one of these,
 /// assembled into a chain.

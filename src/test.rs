@@ -678,9 +678,9 @@ fn make_env_with_output_collector() -> (Env, Rc<RefCell<Vec<u8>>>) {
     let mut e = Env::default();
     let output = Rc::new(RefCell::new(vec![]));
     let o = output.clone();
-    e.register(Val::from_static(b"puts"), 2, move |_, args| {
+    e.register(Val::from_static(b"puts"), 2, move |tcl, frame| {
         let mut v = o.borrow_mut();
-        v.extend_from_slice(&args[1]);
+        v.extend_from_slice(&tcl.commandstack[frame + 1]);
         v.push(b'\n');
         // Like standard puts, we return empty.
         Ok(empty())
