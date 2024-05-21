@@ -402,19 +402,35 @@ pub fn int(mut v: &[u8]) -> Int {
 /// getting bigger with every toolchain revision. So, we provide our own,
 /// optimized for size.
 pub fn int_value(x: Int) -> Val {
-    let mut text = Vec::new();
-    let negative = x < 0;
-    let mut c = x.abs();
-    loop {
-        text.push((c % 10) as u8 + b'0');
-        c /= 10;
-        if c == 0 { break; }
+    // "String Interning"
+    match x {
+        0 => Val::from_static(b"0"),
+        1 => Val::from_static(b"1"),
+        2 => Val::from_static(b"2"),
+        -1 => Val::from_static(b"-1"),
+        _ => {
+            let negative = x < 0;
+            let mut c = x.abs();
+            let digits = if c < 10_000 {
+                4
+            } else if c < 100_000_000 {
+                8
+            } else {
+                12
+            };
+            let mut text = Vec::with_capacity(digits + usize::from(negative));
+            loop {
+                text.push((c % 10) as u8 + b'0');
+                c /= 10;
+                if c == 0 { break; }
+            }
+            if negative {
+                text.push(b'-');
+            }
+            text.reverse();
+            text.into()
+        }
     }
-    if negative {
-        text.push(b'-');
-    }
-    text.reverse();
-    text.into()
 }
 
 /// Processes a value as a list, breaking it at (top-level) whitespace into a
