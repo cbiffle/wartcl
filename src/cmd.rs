@@ -157,17 +157,17 @@ pub fn cmd_math(tcl: &mut Env, frame: usize) -> Result<Val, FlowChange> {
         b"/" => a / b,
 
         #[cfg(feature = "comparison")]
-        b">" => (a > b) as Int,
+        b">" => Int::from(a > b),
         #[cfg(feature = "comparison")]
-        b">=" => (a >= b) as Int,
+        b">=" => Int::from(a >= b),
         #[cfg(feature = "comparison")]
-        b"<" => (a < b) as Int,
+        b"<" => Int::from(a < b),
         #[cfg(feature = "comparison")]
-        b"<=" => (a <= b) as Int,
+        b"<=" => Int::from(a <= b),
         #[cfg(feature = "comparison")]
-        b"==" => (a == b) as Int,
+        b"==" => Int::from(a == b),
         #[cfg(feature = "comparison")]
-        b"!=" => (a != b) as Int,
+        b"!=" => Int::from(a != b),
 
         _ => panic!(),
     };
