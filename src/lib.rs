@@ -105,7 +105,7 @@ extern crate alloc;
 use core::mem;
 use alloc::rc::Rc;
 use alloc::boxed::Box;
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 pub use heap::Val;
 
 /// Internal macro to make it easier to comment/uncomment a bunch of printlns
@@ -133,10 +133,11 @@ pub type Int = i32;
 ///
 /// Dropping it will deallocate all associated state.
 pub struct Env {
-    scope: Scope,
     cmds: Option<Box<Cmd>>,
     commandstack: Vec<Val>,
     strpiecestack: Vec<Val>,
+    varstack: Vec<Var>,
+    varframe: usize,
 }
 
 impl Default for Env {
@@ -144,10 +145,11 @@ impl Default for Env {
     /// bundled command set before returning it.
     fn default() -> Self {
         let mut env = Env {
-            scope: Scope::default(),
             cmds: None,
             commandstack: vec![],
             strpiecestack: vec![],
+            varstack: vec![],
+            varframe: 0,
         };
         cmd::register_all(&mut env);
         env
@@ -176,6 +178,10 @@ impl Env {
             function: Rc::new(function),
             next,
         }));
+    }
+
+    pub fn stack_mut(&mut self, frame: usize) -> &mut [Val] {
+        &mut self.commandstack[frame..]
     }
 
     /// Evaluates the source code `s` in terms of this interpreter.
@@ -272,14 +278,8 @@ impl Env {
     }
 
     fn find_var_mut(&mut self, name: &Val) -> Option<&mut Var> {
-        let mut var = self.scope.vars.as_mut();
-        while let Some(v) = var.take() {
-            if &v.name == name {
-                return Some(v);
-            }
-            var = v.next.as_mut();
-        }
-        None
+        self.varstack[self.varframe..].iter_mut().rev()
+            .find(|v| &v.name == name)
     }
 
     /// Sets a variable named `name` to `value` in the current innermost scope,
@@ -288,12 +288,10 @@ impl Env {
         match self.find_var_mut(&name) {
             Some(v) => v.value = value,
             None => {
-                let next = self.scope.vars.take();
-                self.scope.vars = Some(Box::new(Var {
+                self.varstack.push(Var {
                     name: name.clone(),
                     value,
-                    next,
-                }));
+                });
             }
         }
     }
@@ -657,25 +655,6 @@ struct Var {
     name: Val,
     /// Contents of the variable.
     value: Val,
-    /// Link to next variable in this scope, or `None` if this is the end of the
-    /// chain.
-    next: Option<Box<Var>>,
-}
-
-/// A scope, either global or procedural.
-#[derive(Default)]
-struct Scope {
-    /// Chain of variables defined in this scope, or `None` if there aren't any.
-    vars: Option<Box<Var>>,
-    /// Next outer scope. Note that this is _not_ a lexical parent --- variable
-    /// lookup never uses this. This is a pointer to the scope that will become
-    /// current if this scope returns.
-    ///
-    /// In the outermost global scope, this is `None`.
-    ///
-    /// If `proc` support is disabled, this is implicitly always `None`.
-    #[cfg(feature = "proc")]
-    parent: Option<Box<Scope>>,
 }
 
 /// Shorthand for the type of our boxed command closures.

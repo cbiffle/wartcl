@@ -48,7 +48,8 @@ pub fn cmd_proc(tcl: &mut Env, frame: usize) -> Result<Val, FlowChange> {
     let parsed_params = parse_list(mem::take(&mut tcl.commandstack[frame + 2]));
 
     tcl.register(name, 0, move |tcl, act_frame| {
-        tcl.scope.parent = Some(Box::new(mem::take(&mut tcl.scope)));
+        let outer_varframe = tcl.varframe;
+        tcl.varframe = tcl.varstack.len();
 
         for (i, param) in parsed_params.iter().enumerate() {
             let v = mem::take(tcl.commandstack.get_mut(act_frame + i + 1).ok_or(FlowChange::Error)?);
@@ -56,7 +57,8 @@ pub fn cmd_proc(tcl: &mut Env, frame: usize) -> Result<Val, FlowChange> {
         }
         let r = tcl.eval(body.clone());
 
-        tcl.scope = *tcl.scope.parent.take().unwrap();
+        tcl.varstack.truncate(tcl.varframe);
+        tcl.varframe = outer_varframe;
 
         match r {
             Err(FlowChange::Return(v)) | Ok(v) => Ok(v),
