@@ -409,7 +409,7 @@ fn check_eval(tcl: Option<&mut Env>, s: &[u8], expected: &[u8]) {
         local.insert(Env::default())
     };
 
-    match tcl.eval(&Val::copy(s)) {
+    match tcl.eval(Val::copy(s)) {
         Err(FlowChange::Error) => {
             panic!("eval returned error: {:?}", String::from_utf8_lossy(s));
         }
@@ -448,7 +448,7 @@ fn check_eval_err(tcl: Option<&mut Env>, s: &[u8], expected: FlowChange) {
         local.insert(Env::default())
     };
 
-    assert_eq!(tcl.eval(&Val::copy(s)), Err(expected.clone()));
+    assert_eq!(tcl.eval(Val::copy(s)), Err(expected.clone()));
 
     println!("OK: {:?} -> !{expected:?}", String::from_utf8_lossy(s));
 }
@@ -678,7 +678,7 @@ fn make_env_with_output_collector() -> (Env, Rc<RefCell<Vec<u8>>>) {
     let mut e = Env::default();
     let output = Rc::new(RefCell::new(vec![]));
     let o = output.clone();
-    e.register(&Val::from_static(b"puts"), 2, move |_, args| {
+    e.register(Val::from_static(b"puts"), 2, move |_, args| {
         let mut v = o.borrow_mut();
         v.extend_from_slice(&args[1]);
         v.push(b'\n');

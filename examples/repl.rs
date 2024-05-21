@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // This is where you would register custom commands or set variables before
     // starting the REPL. Here is an example: this command prints a short
     // message and then asks the REPL to exit.
-    tcl.register(&Val::from_static(b"exit"), 0, |_, _| {
+    tcl.register(Val::from_static(b"exit"), 0, |_, _| {
         println!("so long!");
         Err(FlowChange::Return(empty()))
     });
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
         // We have collected an entire statement. Run it!
-        match tcl.eval(&Val::from(read.clone().into_bytes())) {
+        match tcl.eval(Val::from(read.clone().into_bytes())) {
             Err(FlowChange::Error) => println!("ERROR"),
             Err(FlowChange::Return(_)) => {
                 // We'll let the user exit the REPL by typing return, sure, why

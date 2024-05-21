@@ -13,18 +13,20 @@ pub fn cmd_set(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
 
 /// Implementation of the `subst` standard command.
 pub fn cmd_subst(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
-    let s = &args[1];
-    tcl.subst(s)
+    match tcl.subst(mem::take(&mut args[1]))? {
+        DelayedEval::Ready(v) => Ok(v),
+        DelayedEval::EvalThis(v) => tcl.eval(v),
+    }
 }
 
 #[cfg(feature = "incr")]
 pub fn cmd_incr(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
-    let name = &args[1];
+    let name = mem::take(&mut args[1]);
     let current_int = tcl.get_existing_var(&name)
         .map(|v| int(&v))
         .unwrap_or(0);
     let new = int_value(current_int + 1);
-    tcl.set_or_create_var(name, new.clone());
+    tcl.set_or_create_var(&name, new.clone());
     Ok(new)
 }
 
@@ -39,18 +41,18 @@ pub fn cmd_puts(_tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
 #[cfg(feature = "proc")]
 pub fn cmd_proc(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     let body = mem::take(&mut args[3]);
-    let name = &args[1];
+    let name = mem::take(&mut args[1]);
 
-    let parsed_params = parse_list(&args[2]);
+    let parsed_params = parse_list(mem::take(&mut args[2]));
 
     tcl.register(name, 0, move |tcl, act_args| {
         tcl.scope.parent = Some(Box::new(mem::take(&mut tcl.scope)));
 
         for (i, param) in parsed_params.iter().enumerate() {
             let v = mem::take(act_args.get_mut(i + 1).ok_or(FlowChange::Error)?);
-            tcl.set_or_create_var(&param, v);
+            tcl.set_or_create_var(param, v);
         }
-        let r = tcl.eval(&body);
+        let r = tcl.eval(body.clone());
 
         tcl.scope = *tcl.scope.parent.take().unwrap();
 
@@ -77,7 +79,7 @@ pub fn cmd_if(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
     // We always arrive at the top of this loop while expecting a condition,
     // either just after the initial "if", or after an "elseif".
     while i < args.len() {
-        let cond = int(&tcl.eval(&args[i])?) != 0;
+        let cond = int(&tcl.eval(mem::take(&mut args[i]))?) != 0;
 
         if cond {
             branch = Some(mem::take(&mut args[i + 1]));
@@ -103,7 +105,7 @@ pub fn cmd_if(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
             }
         }
     }
-    tcl.eval(&branch.unwrap_or_default())
+    tcl.eval(branch.unwrap_or_default())
 }
 
 /// Implementation of the `while` standard command.
@@ -114,10 +116,10 @@ pub fn cmd_while(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
 
     debug!("while body = {:?}", String::from_utf8_lossy(&body));
     loop {
-        if int(&tcl.eval(&cond)?) == 0 {
+        if int(&tcl.eval(cond.clone())?) == 0 {
             break;
         }
-        let r = tcl.eval(&body);
+        let r = tcl.eval(body.clone());
         match r {
             Err(FlowChange::Again) | Ok(_) => (),
 
@@ -225,6 +227,6 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
 /// The exact commands registered depend on the build options.
 pub fn register_all(env: &mut Env) {
     for &(name, arity, function) in STANDARD_COMMANDS {
-        env.register(&Val::from_static(name), arity, function);
+        env.register(Val::from_static(name), arity, function);
     }
 }

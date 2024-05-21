@@ -16,12 +16,12 @@
 //!
 //! let mut tcl = wartcl::Env::default();
 //!
-//! tcl.register(&Val::from_static(b"my-custom-command"), 1, |_, _| {
+//! tcl.register(Val::from_static(b"my-custom-command"), 1, |_, _| {
 //!     println!("hi!");
 //!     Ok(wartcl::empty())
 //! });
 //!
-//! match tcl.eval(&Val::from_static(b"my-custom-command\n")) {
+//! match tcl.eval(Val::from_static(b"my-custom-command\n")) {
 //!     Ok(_) => {
 //!         // the script worked!
 //!     }
@@ -157,14 +157,14 @@ impl Env {
     /// itself.
     pub fn register(
         &mut self,
-        name: &Val,
+        name: Val,
         arity: usize,
         function: impl Fn(&mut Env, &mut [Val])
             -> Result<Val, FlowChange> + 'static,
     ) {
         let next = self.cmds.take();
         self.cmds = Some(Box::new(Cmd {
-            name: name.clone(),
+            name,
             arity,
             function: Rc::new(function),
             next,
@@ -175,7 +175,7 @@ impl Env {
     ///
     /// On normal completion, returns the result. Otherwise, returns the change
     /// in flow control.
-    pub fn eval(&mut self, s: &Val) -> Result<Val, FlowChange> {
+    pub fn eval(&mut self, s: Val) -> Result<Val, FlowChange> {
         // Current string being accumulated out of pieces. We retain this vector
         // across pieces, clear()ing it each time, to reuse its allocation.
         let mut strpieces = Vec::new();
@@ -188,7 +188,7 @@ impl Env {
         // return the final one.
         let mut last_result = None;
 
-        let mut p = Tokenizer::new(s);
+        let mut p = Tokenizer::new(&s);
 
         loop {
             let tok = p.next();
@@ -198,7 +198,11 @@ impl Env {
 
                 // Accumulate string pieces.
                 Some(Token::Word(w) | Token::Part(w)) => {
-                    strpieces.push(self.subst(&Val::slice_ref(s, w))?);
+                    let subst_result = match self.subst(Val::slice_ref(&s, w))? {
+                        DelayedEval::Ready(v) => v,
+                        DelayedEval::EvalThis(v) => self.eval(v)?,
+                    };
+                    strpieces.push(subst_result);
                     // Word(_) marks the _end_ of a piece, so transfer it to the
                     // command.
                     if matches!(tok, Some(Token::Word(_))) {
@@ -270,7 +274,7 @@ impl Env {
     /// Sets a variable named `name` to `value` in the current innermost scope,
     /// creating it if it doesn't exist.
     pub fn set_or_create_var(&mut self, name: &Val, value: Val) {
-        match self.find_var_mut(name) {
+        match self.find_var_mut(&name) {
             Some(v) => v.value = value,
             None => {
                 let next = self.scope.vars.take();
@@ -297,16 +301,16 @@ impl Env {
     /// Substitution steps include peeling the outer curly braces off a braced
     /// string, evaluating a square-bracketed subcommand, or processing a
     /// dollar-sign variable splice.
-    fn subst(&mut self, s: &Val) -> Result<Val, FlowChange> {
+    fn subst(&mut self, s: Val) -> Result<DelayedEval, FlowChange> {
         match s.split_first() {
-            None => Ok(empty()),
+            None => Ok(DelayedEval::Ready(empty())),
             Some((b'{', b"")) => Err(FlowChange::Error),
             Some((b'{', rest)) => {
                 // TODO: picked up this shortcut behavior from partcl... this
                 // assumes that last char is `}` because the tokenizer will have
                 // run before we got here, and the tokenizer validates that.
                 // Should this function also validate that? I'm not sure.
-                Ok(Val::slice_ref(s, &rest[..rest.len() - 1]))
+                Ok(DelayedEval::Ready(Val::slice_ref(&s, &rest[..rest.len() - 1])))
             }
             Some((b'$', name)) => {
                 // TODO: this behavior is from partcl, and doesn't match real
@@ -318,14 +322,19 @@ impl Env {
                 let mut subcmd = Vec::with_capacity(name.len() + b"set ".len());
                 subcmd.extend_from_slice(b"set ");
                 subcmd.extend_from_slice(name);
-                self.eval(&subcmd.into())
+                Ok(DelayedEval::EvalThis(subcmd.into()))
             }
             Some((b'[', rest)) => {
-                self.eval(&Val::slice_ref(s, &rest[..rest.len() - 1]))
+                Ok(DelayedEval::EvalThis(Val::slice_ref(&s, &rest[..rest.len() - 1])))
             }
-            _ => Ok(s.clone()),
+            _ => Ok(DelayedEval::Ready(s)),
         }
     }
+}
+
+enum DelayedEval {
+    Ready(Val),
+    EvalThis(Val),
 }
 
 /// Parses `v` as a signed integer. This always succeeds; if `v` is not a valid
@@ -404,12 +413,12 @@ pub fn int_value(x: Int) -> Val {
 ///
 /// This follows normal Tcl-style list parsing rules, so "a" is a list of one
 /// element, "a b c" is a list of three, and "a {b c}" is a list of two.
-pub fn parse_list(v: &Val) -> Vec<Val> {
+pub fn parse_list(v: Val) -> Vec<Val> {
     let mut words = Vec::new();
 
-    for tok in Tokenizer::new(v) {
+    for tok in Tokenizer::new(&v) {
         if let Token::Word(text) = tok {
-            words.push(Val::slice_ref(v, if text[0] == b'{' {
+            words.push(Val::slice_ref(&v, if text[0] == b'{' {
                 &text[1..text.len() - 1]
             } else {
                 text
@@ -469,7 +478,7 @@ pub fn empty() -> Val {
 }
 
 /// Updates `s` by stripping off leading (horizontal) whitespace characters.
-fn skip_leading_whitespace(s: &mut &Value) {
+fn skip_leading_whitespace(s: &mut &[u8]) {
     while let Some((first, next)) = s.split_first() {
         if b" \t".contains(first) {
             *s = next;
