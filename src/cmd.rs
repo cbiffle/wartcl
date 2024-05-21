@@ -135,14 +135,13 @@ pub fn cmd_while(tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
 /// choose the operation.
 #[cfg(any(feature = "arithmetic", feature = "comparison"))]
 pub fn cmd_math(_tcl: &mut Env, args: &mut [Val]) -> Result<Val, FlowChange> {
-    let bval = &args[2];
-    let aval = &args[1];
-    let opval = &args[0];
+    let (a, b) = {
+        let bval = mem::take(&mut args[2]);
+        let aval = mem::take(&mut args[1]);
+        (int(&aval), int(&bval))
+    };
 
-    let a = int(aval);
-    let b = int(bval);
-
-    let c = match &**opval {
+    let c = match &*mem::take(&mut args[0]) {
         #[cfg(feature = "arithmetic")]
         b"+" => a + b,
         #[cfg(feature = "arithmetic")]
