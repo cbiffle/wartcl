@@ -1,0 +1,73 @@
+# `wartcl`: a minimal Tcl-like language in Rust
+
+This is a rewrite/reimagining of [partcl] in Rust, targeted at small embedded
+(`no_std`) systems.
+
+`wartcl` is pronounced WAHR-tih-cull, after the tongue-in-cheek name for
+phenomena that exhibit wave/particle duality in quantum physics. Since values in
+Tcl collapse into different things (strings, numbers, programs) depending on how
+they're observed.
+
+## tl;dr
+
+- Very minimal Tcl-like language runtime.
+- Designed for small footprint microcontrollers (~10 kiB compiled for ARMv7-M on
+  bare metal).
+- Entirely written in Rust's safe subset.
+- Intended to be small (in terms of generated code), simple (in terms of code
+  structure), and reasonably performant, in that order.
+
+## Limitations
+
+Compared to Tcl a lot of things are missing:
+
+- Arrays
+- Globals/upvars
+- Floating point math
+- Fancy return options
+- Catch
+- Expression syntax
+- Most interesting loops
+
+## Compared to `partcl`
+
+Do not take the existence of `wartcl` as a negative commentary on `partcl`. It's
+intended as more of an homage.
+
+Like `partcl`, this implements a Tcl-like language, not Tcl. `wartcl` mirrors
+`partcl`'s structure and shares many of its limitations:
+
+- A total lack of expression (`expr`) support. Math operations must be written
+  prefix, like `== 1 2`.
+- Math in general is really slow, because it's done on strings, as in pre-8.x
+  Tcl implementations.
+
+This implementation passes the same testsuites as partcl with some light
+changes, which are documented at the beginning of the test section of `lib.rs`.
+(In brief: partcl relies on the ability to do out-of-range accesses that read
+NULs at the end of strings; in Rust we don't NUL-terminate our strings so some
+functions had to change.)
+
+Ways this is different from `partcl`:
+
+- `wartcl` is entirely written in safe Rust, which of course means no risk of
+  out-of-bounds accesses, memory leaks, or segfaults, but _more importantly,_
+  also means no cryptic pointer arithmetic in for-loops in macros, so the code
+  is much easier to follow.
+
+- `wartcl` runs about 4x faster across the board than `partcl`, despite having
+  significantly more error checking. (Memory safety means I can more confidently
+  apply aggressive optimizations.)
+
+- `wartcl` is somewhat shorter, despite not using as aggressively dense of a
+  coding style as `partcl` (not packing multiple things on one line, longer
+  variable names, etc).
+
+- Commands registered with the tcl engine can be arbitrary closures, instead of
+  function pointers with a `void*` argument, so commands can reference and share
+  as much (or as little) data as they need without losing type safety.
+
+- `wartcl` fixes several bugs (`if` syntax, error propagation from procs, etc.).
+
+
+[partcl]: https://github.com/zserge/partcl

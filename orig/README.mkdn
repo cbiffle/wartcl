@@ -1,0 +1,7 @@
+# The Original `partcl`
+
+This crate builds partcl from C source and wraps it in a basic Rust interface. I
+use this for performance and behavioral measurement. It's probably not useful
+outside of that, mostly because the interface is very specific to my needs.
+
+The C code in this crate is covered by the `LICENSE` file.
