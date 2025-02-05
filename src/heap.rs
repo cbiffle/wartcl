@@ -10,38 +10,59 @@ use alloc::vec::Vec;
 /// heap. This will live until its refcount reaches zero, at which point it will
 /// be deallocated, taking the allocation with it.
 struct Shared {
-    /// The owning pointer for the allocation.
-    allocation: Box<[u8]>,
     /// The number of outstanding references.
     refcount: Cell<usize>,
+    /// The thing we're referencing
+    kind: SharedKind,
+}
+
+enum SharedKind {
+    Owned(Box<[u8]>),
+    Sub {
+        owner: Option<NonNull<Shared>>,
+        base: NonNull<u8>,
+        len: usize,
+    },
 }
 
 impl Shared {
-    fn new(allocation: Box<[u8]>) -> Box<Self> {
+    fn new_owned(allocation: Box<[u8]>) -> Box<Self> {
         debug_assert!(!allocation.is_empty());
         Box::new(Self {
-            allocation,
             refcount: Cell::new(1),
+            kind: SharedKind::Owned(allocation),
         })
     }
+    fn new_static(data: &'static [u8]) -> Box<Self> {
+        debug_assert!(!data.is_empty());
+        Box::new(Self {
+            refcount: Cell::new(1),
+            kind: SharedKind::Sub {
+                owner: None,
+                base: unsafe { NonNull::new_unchecked(data.as_ptr() as *mut u8) },
+                len: data.len(),
+            },
+        })
+    }
+
+    fn len(&self) -> usize {
+        match &self.kind {
+            SharedKind::Owned(b) => b.len(),
+            SharedKind::Sub { len, .. } => *len,
+        }
+    }
+
 }
 
+
 /// A reference to a shared value.
-pub struct Val {
-    base: NonNull<u8>,
-    len: usize,
-    control: Option<NonNull<Shared>>,
-}
+pub struct Val(Option<NonNull<Shared>>);
 
 impl Val {
     /// Creates a new empty `Val`. The result won't be associated with any
     /// backing memory, so this operation is essentially free.
     pub const fn new() -> Self {
-        Self {
-            base: NonNull::dangling(),
-            len: 0,
-            control: None,
-        }
+        Self(None)
     }
 
     /// Allocates a new block of memory to contain the bytes referenced by
@@ -53,27 +74,27 @@ impl Val {
             Self::new()
         } else {
             let allocation = value.into();
-            let mut new_control = Shared::new(allocation);
+            let mut new_control = Shared::new_owned(allocation);
 
-            Self {
-                base: unsafe { NonNull::new_unchecked(new_control.allocation.as_mut_ptr()) },
-                len: value.len(),
-                control: Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }),
-            }
+            Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
         }
     }
 
-    pub const fn from_static(slice: &'static [u8]) -> Self {
-        Self {
-            base: unsafe { NonNull::new_unchecked(slice.as_ptr() as *mut u8) },
-            len: slice.len(),
-            control: None,
+    pub fn from_static(slice: &'static [u8]) -> Self {
+        if slice.is_empty() {
+            Self::new()
+        } else {
+            let mut new_control = Shared::new_static(slice);
+
+            Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
         }
     }
 
     fn control(&self) -> Option<&Shared> {
-        self.control.map(|p| unsafe { p.as_ref() })
+        self.0.map(|p| unsafe { p.as_ref() })
     }
+
+    /*
 
     /// Returns a new `Val` containing the first `n` bytes referenced by `this`,
     /// while adjusting `this` to omit them.
@@ -83,13 +104,18 @@ impl Val {
     ///
     /// `Val::take_first_n(&mut v, 0)` is a weird way of writing `Val::new()`.
     pub fn take_first_n(this: &mut Val, n: usize) -> Self {
-        assert!(n <= this.len);
-
         if n == 0 {
             return Self::new();
-        } else if n == this.len {
+        }
+
+        let Some(control) = this.control() else {
+            panic!();
+        };
+        if n == control.len() {
             return mem::take(this);
         }
+
+        assert!(n <= control.len());
 
         let mut first = this.clone();
         first.len = n;
@@ -99,6 +125,7 @@ impl Val {
 
         first
     }
+    */
 
     /// Returns a new `Val` referencing a sub-range of `this`.
     ///
@@ -118,19 +145,51 @@ impl Val {
         let end = match range.end_bound() {
             Bound::Included(&i) => i + 1,
             Bound::Excluded(&i) => i,
-            Bound::Unbounded => this.len,
+            Bound::Unbounded => this.len(),
         };
         assert!(start <= end);
-        assert!(end <= this.len);
+        assert!(end <= this.len());
 
         if end == start {
-            Self::new()
-        } else {
-            let mut result = this.clone();
-            result.base = unsafe { NonNull::new_unchecked(this.base.as_ptr().add(start)) };
-            result.len = end - start;
-            result
+            return Self::new();
+        } else if start == 0 && end == this.len() {
+            return this.clone();
         }
+
+        let control = unsafe { this.0.unwrap().as_mut() };
+        let new_kind = match &control.kind {
+            SharedKind::Owned(b) => {
+                control.refcount.set(control.refcount.get() + 1);
+                SharedKind::Sub {
+                    owner: Some(this.0.unwrap()),
+                    base: unsafe { NonNull::new_unchecked(b.as_ptr().add(start) as *mut u8) },
+                    len: end - start,
+                }
+            }
+            SharedKind::Sub { owner: Some(o), base, .. } => {
+                let oref = unsafe { o.as_ref() };
+                oref.refcount.set(oref.refcount.get() + 1);
+                SharedKind::Sub {
+                    owner: Some(*o),
+                    base: unsafe { NonNull::new_unchecked(base.as_ptr().add(start)) },
+                    len: end - start,
+                }
+            }
+            SharedKind::Sub { owner: None, base, .. } => {
+                // No refcount management is needed.
+                SharedKind::Sub {
+                    owner: None,
+                    base: unsafe { NonNull::new_unchecked(base.as_ptr().add(start)) },
+                    len: end - start,
+                }
+            }
+        };
+        let new_control = Box::new(Shared {
+            refcount: Cell::new(1),
+            kind: new_kind,
+        });
+
+        Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
     }
 
     pub fn slice_ref(this: &Val, slice: &[u8]) -> Self {
@@ -142,11 +201,37 @@ impl Val {
         let end = unsafe { slice.as_ptr().add(slice.len()) };
         assert!(valid_range.contains(&base) && end <= valid_range.end);
 
-        let mut result = this.clone();
-        result.base = unsafe { NonNull::new_unchecked(base as *mut u8) };
-        result.len = slice.len();
-        result
+        let control = unsafe { this.0.unwrap().as_mut() };
+        let new_owner = match &control.kind {
+            SharedKind::Owned(b) => {
+                if b.as_ptr() == slice.as_ptr() && b.len() == slice.len() {
+                    return this.clone();
+                }
+                control.refcount.set(control.refcount.get() + 1);
+                Some(NonNull::from(control))
+            }
+            SharedKind::Sub { owner: Some(o), .. } => {
+                let oref = unsafe { o.as_ref() };
+                oref.refcount.set(oref.refcount.get() + 1);
+                Some(*o)
+            }
+            SharedKind::Sub { owner: None, .. } => {
+                None
+            }
+        };
+
+        let new_control = Box::new(Shared {
+            refcount: Cell::new(1),
+            kind: SharedKind::Sub {
+                owner: new_owner,
+                base: unsafe { NonNull::new_unchecked(base as *mut u8) },
+                len: slice.len(),
+            }
+        });
+
+        Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
     }
+    /*
 
     /// Returns the last byte in the slice, simultaneously shortening the slice
     /// by one byte. If the slice is empty, returns `None`.
@@ -165,6 +250,7 @@ impl Val {
             Some(result)
         }
     }
+
 
     /// Returns the first byte in teh slice, simultaneously moving the slice's
     /// base address up to exclude it (and reducing the length). If the slice is
@@ -185,6 +271,7 @@ impl Val {
             Some(result)
         }
     }
+    */
 
     /// Decrements the reference count of the control block, if any, and zeroes
     /// the control block pointer.
@@ -204,7 +291,7 @@ impl Val {
             let refcount = control.refcount.get();
             if refcount == 1 {
                 let boxed_control = unsafe {
-                    Box::from_raw(self.control.take().unwrap().as_ptr())
+                    Box::from_raw(self.0.take().unwrap().as_ptr())
                 };
                 drop(boxed_control);
             } else {
@@ -248,14 +335,9 @@ impl From<Box<[u8]>> for Val {
         if value.is_empty() {
             Self::new()
         } else {
-            let len = value.len();
-            let mut new_control = Shared::new(value);
+            let new_control = Shared::new_owned(value);
 
-            Self {
-                base: unsafe { NonNull::new_unchecked(new_control.allocation.as_mut_ptr()) },
-                len,
-                control: Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }),
-            }
+            Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
         }
     }
 }
@@ -316,8 +398,17 @@ impl Deref for Val {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
-        unsafe {
-            core::slice::from_raw_parts(self.base.as_ptr(), self.len)
+        if let Some(control) = self.control() {
+            match &control.kind {
+                SharedKind::Owned(b) => &*b,
+                SharedKind::Sub { base, len, .. } => {
+                    unsafe {
+                        core::slice::from_raw_parts(base.as_ptr(), *len)
+                    }
+                }
+            }
+        } else {
+            &[]
         }
     }
 }
@@ -326,8 +417,10 @@ impl Clone for Val {
     fn clone(&self) -> Self {
         if let Some(control) = self.control() {
             control.refcount.set(control.refcount.get() + 1);
+            Self(Some(NonNull::from(control)))
+        } else {
+            Self::new()
         }
-        Self { base: self.base, len: self.len, control: self.control }
     }
 }
 
@@ -346,39 +439,45 @@ mod tests {
     #[track_caller]
     #[allow(useless_ptr_null_checks)]
     fn checks(v: &Val) {
-        assert!(!v.base.as_ptr().is_null(),
-            "the base pointer must never be null");
+        if let Some(p) = v.0 {
+            assert_ne!(v.len(), 0);
 
-        if v.len == 0 {
-            // We don't _require_ that an empty slice have the dangling pointer,
-            // since we won't dereference it.
-
-            assert_eq!(v.control, None,
-                "no empty value can have an allocated control block");
-        } else {
-            assert_ne!(v.base, NonNull::dangling(),
-                "real allocation must not have the dangling pointer");
-        }
-
-        if let Some(c) = v.control {
             let align = mem::align_of::<Shared>();
-            assert_eq!((c.as_ptr() as usize) & (align - 1), 0,
+            assert_eq!((p.as_ptr() as usize) & (align - 1), 0,
                 "control pointer must be properly aligned");
-            let c = unsafe { c.as_ref() };
+            let c = unsafe { p.as_ref() };
             
             assert!(c.refcount.get() > 0);
 
-            let valid_range = c.allocation.as_ptr_range();
-            assert!(valid_range.contains(&(v.base.as_ptr() as *const u8)));
-            let end = unsafe { v.base.as_ptr().add(v.len) } as *const u8;
-            assert!(end >= v.base.as_ptr(), "base + len must not wrap");
-            assert!(end <= valid_range.end);
+            match &c.kind {
+                SharedKind::Owned(b) => {
+                    assert!(b.len() > 0);
+                }
+                SharedKind::Sub { owner: Some(o), base, len } => {
+                    let oref = unsafe { o.as_ref() };
+                    match &oref.kind {
+                        SharedKind::Owned(b) => {
+                            let valid_range = b.as_ptr_range();
+                            assert!(valid_range.contains(&(base.as_ptr() as *const u8)));
+                            assert!(unsafe { base.as_ptr().add(*len) } as *const u8 <= valid_range.end);
+                        }
+                        SharedKind::Sub { .. } => {
+                            panic!("double indirection in control block");
+                        }
+                    }
+                }
+                SharedKind::Sub { owner: None, base, len } => {
+                    assert!((base.as_ptr() as usize).checked_add(*len).is_some());
+                }
+            }
+        } else {
+            assert_eq!(v.len(), 0);
         }
     }
 
     #[track_caller]
     fn assert_refcount_is(v: &Val, n: usize) {
-        let control = v.control.expect("value has no control block (static?)");
+        let control = v.0.expect("value has no control block (static?)");
         let control = unsafe { control.as_ref() };
         
         assert_eq!(control.refcount.get(), n);
@@ -388,7 +487,7 @@ mod tests {
     fn new_does_not_allocate() {
         let v = Val::new();
 
-        assert_eq!(v.len, 0);
+        assert_eq!(v.0, None);
         checks(&v);
     }
 
@@ -396,7 +495,7 @@ mod tests {
     fn empty_slice_copy_does_not_allocate() {
         let v = Val::copy(&[][..]);
 
-        assert_eq!(v.len, 0);
+        assert_eq!(v.0, None);
         checks(&v);
     }
 
@@ -404,7 +503,6 @@ mod tests {
     fn from_static_does_not_allocate() {
         let v = Val::from_static(b"hello world");
         assert_eq!(v.len(), b"hello world".len());
-        assert_eq!(v.control, None);
         checks(&v);
     }
 
@@ -414,7 +512,6 @@ mod tests {
         let v2 = v.clone();
 
         assert_eq!(v, v2);
-        assert_eq!(v2.control, None);
         checks(&v);
         checks(&v2);
     }
@@ -422,7 +519,7 @@ mod tests {
     #[test]
     fn allocate_slice_copy() {
         let v = Val::copy(b"hello world");
-        assert_ne!(v.control, None);
+        assert_ne!(v.0, None);
         checks(&v);
         assert_refcount_is(&v, 1);
     }
@@ -438,7 +535,7 @@ mod tests {
 
         assert_eq!(v, v2);
 
-        assert_eq!(v.control, v2.control);
+        assert_eq!(v.0, v2.0);
         assert_refcount_is(&v, 2);
         assert_refcount_is(&v2, 2);
 
@@ -453,31 +550,31 @@ mod tests {
         let v_all = Val::slice(&v, 0..);
         checks(&v_all);
         assert_eq!(v, v_all);
+        assert_eq!(v.0, v_all.0);
+        assert_refcount_is(&v, 2);
+        assert_refcount_is(&v_all, 2);
 
         let v_front = Val::slice(&v, ..5);
         checks(&v_front);
         assert_eq!(&*v_front, b"hello");
-        assert_eq!(v_front.control, v.control);
-
         assert_refcount_is(&v, 3);
         assert_refcount_is(&v_all, 3);
-        assert_refcount_is(&v_front, 3);
+        assert_refcount_is(&v_front, 1);
 
         let v_mid = Val::slice(&v, 1..5);
         checks(&v_mid);
         assert_eq!(&*v_mid, b"ello");
-        assert_eq!(v_mid.control, v.control);
-
         assert_refcount_is(&v, 4);
-        assert_refcount_is(&v_all, 4);
-        assert_refcount_is(&v_front, 4);
+        assert_refcount_is(&v_front, 1);
+        assert_refcount_is(&v_mid, 1);
 
         let v_back = Val::slice(&v, 7..);
         checks(&v_back);
         assert_eq!(&*v_back, b"world");
-        assert_eq!(v_back.control, v.control);
         assert_refcount_is(&v, 5);
-        assert_refcount_is(&v_back, 5);
+        assert_refcount_is(&v_front, 1);
+        assert_refcount_is(&v_mid, 1);
+        assert_refcount_is(&v_back, 1);
 
         let v_empty = Val::slice(&v, 5..5);
         checks(&v_empty);
@@ -517,7 +614,6 @@ mod tests {
         let v2 = Val::slice_ref(&v, sub);
         checks(&v2);
 
-        assert_eq!(v.control, v2.control);
         assert_eq!(&v2[..], sub);
     }
 
@@ -528,7 +624,6 @@ mod tests {
         let v2 = Val::slice_ref(&v, sub);
         checks(&v2);
 
-        assert_eq!(v.control, v2.control);
         assert_eq!(&v2[..], sub);
     }
 }
