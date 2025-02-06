@@ -34,11 +34,11 @@ use super::*;
 
 #[track_caller]
 fn check_tokens(input: &[u8], expect: &[Token]) {
-    let mut p = Tokenizer::new(input);
+    let p = Tokenizer::new(input);
     let expect_count = expect.len();
     let mut expect = expect.iter().enumerate();
     let mut found = 0;
-    while let Some(tok) = p.next() {
+    for tok in p {
         found += 1;
         let (ex_i, &ex_tok) =
             expect.next().expect("more tokens in input than expected");
@@ -556,9 +556,10 @@ fn test_2_flow() {
 
     // DEVIATION: partcl returns 0 from while loops, standard says empty string;
     // I choose empty string.
-    // DEVIATION: partcl creates variables on reference to contain empty string,
-    // which it treats as zero; this hides errors and I choose to treat it as an
-    // error like standard Tcl. So, we must set x first here.
+    // DEVIATION: partcl creates unknown variables when they are first used, and
+    // initializes them to empty string, which it treats as zero; this hides
+    // errors and I choose to treat it as an error like standard Tcl. So, we
+    // must set x first here.
     check_eval(None, b"set x 0; while {< $x 5} {set x [+ $x 1]}", b"");
     // DEVIATION: partcl break returns the string "break". It does this due
     // to an almost accidental leaving-around of state. I have fixed this; a
