@@ -23,6 +23,7 @@ panic = "abort"
 [dev-dependencies]
 criterion = "0.5.1"
 partcl-wrapper.path = "orig"
+rustyline = "15.0.0"
 
 [[bench]]
 name = "basic"
