@@ -7,7 +7,7 @@
 use std::error::Error;
 
 use rustyline::DefaultEditor;
-use wartcl::{Env, FlowChange, Token, Tokenizer};
+use wartcl::{empty, Env, FlowChange, Token, Tokenizer};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Create a halfway-decent command line editor experience using rustyline.
@@ -17,7 +17,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut tcl = Env::default();
 
     // This is where you would register custom commands or set variables before
-    // starting the REPL.
+    // starting the REPL. Here is an example: this command prints a short
+    // message and then asks the REPL to exit.
+    tcl.register(b"exit", 0, |_, _| {
+        println!("so long!");
+        Err(FlowChange::Return(empty()))
+    });
 
     'outerloop:
     loop {
@@ -31,7 +36,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         'readloop:
         loop {
             let line = editor.readline(prompt)?;
-            println!("nom");
 
             read.push_str(&line);
             // rustyline removes the trailing newline; add it back.
@@ -43,7 +47,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             // entire `read` buffer, to see if there's a full command yet.
             let mut t = Tokenizer::new(read.as_bytes());
             while let Some(tok) = t.next() {
-                println!("{tok:?}");
                 if tok == Token::Error && !t.at_end() {
                     // We've found something that makes no sense, like a closing
                     // curly brace without a corresponding opening brace.
@@ -66,6 +69,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         // We have collected an entire statement. Run it!
         match tcl.eval(read.as_bytes()) {
             Err(FlowChange::Error) => println!("ERROR"),
+            Err(FlowChange::Return(_)) => {
+                // We'll let the user exit the REPL by typing return, sure, why
+                // not.
+                break;
+            }
             Err(fc) => {
                 // This handles cases where the user typed something like
                 // `break` at the top level.
@@ -79,4 +87,5 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     }
 
+    Ok(())
 }
