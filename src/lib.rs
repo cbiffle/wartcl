@@ -159,11 +159,22 @@ impl Env {
         function: impl Fn(&mut Env, &mut [OwnedValue])
             -> Result<OwnedValue, FlowChange> + 'static,
     ) {
+        self.register_mono(name, arity, Rc::new(function))
+    }
+
+    /// Monomorphized version of `register` so that the code below doesn't get
+    /// repeated for every function type.
+    fn register_mono(
+        &mut self,
+        name: &Value,
+        arity: usize,
+        function: Rc<FnDyn>,
+    ) {
         let next = self.cmds.take();
         self.cmds = Some(Box::new(Cmd {
             name: name.into(),
             arity,
-            function: Rc::new(function),
+            function,
             next,
         }));
     }
