@@ -4,6 +4,10 @@ workspace = { members = ["orig"] }
 name = "wartcl"
 version = "0.1.0"
 edition = "2021"
+license = "MPL-2.0"
+description = "A minimal embeddable Tcl-like language"
+repository = "https://github.com/cbiffle/wartcl"
+documentation = "https://docs.rs/wartcl"
 
 [features]
 default = ["std", "proc", "arithmetic", "comparison", "incr"]
