@@ -392,6 +392,13 @@ pub fn int(mut v: &Value) -> Int {
 /// optimized for size.
 pub fn int_value(x: Int) -> OwnedValue {
     let mut text = Vec::new();
+    int_value_into(x, &mut text);
+    text.into()
+}
+
+/// Formats an integer as a decimal string, appending it to an existing buffer.
+pub fn int_value_into(x: Int, text: &mut Vec<u8>) {
+    let initial_len = text.len();
     let negative = x < 0;
     let mut c = x.abs();
     loop {
@@ -402,8 +409,19 @@ pub fn int_value(x: Int) -> OwnedValue {
     if negative {
         text.push(b'-');
     }
-    text.reverse();
-    text.into()
+    text[initial_len..].reverse();
+}
+
+/// Determines the number of bytes required to format `x` in decimal.
+pub fn int_value_len(x: Int) -> usize {
+    let mut len = if x < 0 { 1 } else { 0 };
+    let mut c = x.abs();
+    loop {
+        len += 1;
+        c /= 10;
+        if c == 0 { break; }
+    }
+    len
 }
 
 /// Processes a value as a list, breaking it at (top-level) whitespace into a
