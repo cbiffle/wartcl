@@ -210,7 +210,7 @@ impl Env {
                     // Word(_) marks the _end_ of a piece, so transfer it to the
                     // command.
                     if matches!(tok, Some(Token::Word(_))) {
-                        command.push(flatten_string(mem::take(&mut strpieces)));
+                        command.push(drain_and_flatten_string(&mut strpieces));
                     }
                 }
 
@@ -476,14 +476,17 @@ pub type OwnedValue = Box<Value>;
 /// Produces a newly allocated string value that contains all the elements of
 /// `v` concatenated together, with no intervening bytes. This operation is
 /// useful for pasting strings together during substitution handling.
-fn flatten_string(mut v: Vec<OwnedValue>) -> OwnedValue {
+///
+/// The vec `v` is left empty after this call. Its elements are deallocated,
+/// unless it only contained one, in which case that element is returned.
+fn drain_and_flatten_string(v: &mut Vec<OwnedValue>) -> OwnedValue {
     if v.len() == 1 {
         return v.pop().unwrap();
     }
     let len = v.iter().map(|component| component.len()).sum::<usize>();
     let mut out = Vec::with_capacity(len);
-    for component in &v {
-        out.extend_from_slice(component);
+    for component in v.drain(..) {
+        out.extend_from_slice(&component);
     }
     out.into()
 }
