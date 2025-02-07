@@ -7,11 +7,20 @@ edition = "2021"
 
 [features]
 default = ["std", "proc", "arithmetic", "comparison", "incr"]
+
+# Implement commands that require std library support
 std = []
+# Include support for user-defined procs
 proc = []
+# Include support for arithmetic, which is bigger than you might expect because
+# of the need to parse numbers.
 arithmetic = []
+# Include support for numeric comparisons like < and ==
 comparison = []
+# Include support for incr. This is separate from general arithmetic. If you
+# just need counters, this is a bit smaller.
 incr = []
+# Use i64 as the internal integer type. If not set, the default is i32.
 i64 = []
 
 [dependencies]
