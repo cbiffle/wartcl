@@ -2,7 +2,7 @@
 
 extern crate alloc;
 
-use core::{cell::Cell, cmp::Ordering, fmt::{self, Debug}, hash::{Hash, Hasher}, mem, ops::{Bound, Deref, RangeBounds}, ptr::NonNull};
+use core::{cell::Cell, cmp::Ordering, fmt::{self, Debug}, hash::{Hash, Hasher}, ops::{Bound, Deref, RangeBounds}, ptr::NonNull};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
@@ -17,15 +17,25 @@ struct Shared {
 }
 
 enum SharedKind {
+    /// We actually own the memory.
     Owned(Box<[u8]>),
+    /// We represent a slice within some other allocation.
     Sub {
+        /// Control block for the backing allocation, or `None` if the
+        /// allocation is a static.
+        ///
+        /// If this points into the heap, we maintain +1 refcount on it to keep
+        /// this from becoming invalid.
         owner: Option<NonNull<Shared>>,
+        /// Start of our slice.
         base: NonNull<u8>,
+        /// Number of bytes in our slice.
         len: usize,
     },
 }
 
 impl Shared {
+    /// Creates a heap-allocated control block that owns `allocation`.
     fn new_owned(allocation: Box<[u8]>) -> Box<Self> {
         debug_assert!(!allocation.is_empty());
         Box::new(Self {
@@ -33,6 +43,9 @@ impl Shared {
             kind: SharedKind::Owned(allocation),
         })
     }
+
+    /// Creates a heap-allocated control block that references the static
+    /// `data`.
     fn new_static(data: &'static [u8]) -> Box<Self> {
         debug_assert!(!data.is_empty());
         Box::new(Self {
@@ -74,58 +87,31 @@ impl Val {
             Self::new()
         } else {
             let allocation = value.into();
-            let mut new_control = Shared::new_owned(allocation);
+            let new_control = Shared::new_owned(allocation);
 
             Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
         }
     }
 
+    /// Creates a `Val` describing some static bytes.
+    ///
+    /// This performs an allocation for the control block, but does _not_ copy
+    /// the data.
     pub fn from_static(slice: &'static [u8]) -> Self {
         if slice.is_empty() {
             Self::new()
         } else {
-            let mut new_control = Shared::new_static(slice);
+            let new_control = Shared::new_static(slice);
 
             Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
         }
     }
 
+    /// Returns a reference to the control block, or `None` if this is a
+    /// flyweight empty string.
     fn control(&self) -> Option<&Shared> {
         self.0.map(|p| unsafe { p.as_ref() })
     }
-
-    /*
-
-    /// Returns a new `Val` containing the first `n` bytes referenced by `this`,
-    /// while adjusting `this` to omit them.
-    ///
-    /// This is sort of like `split`, but is slightly cheaper since it reduces
-    /// reference count updates.
-    ///
-    /// `Val::take_first_n(&mut v, 0)` is a weird way of writing `Val::new()`.
-    pub fn take_first_n(this: &mut Val, n: usize) -> Self {
-        if n == 0 {
-            return Self::new();
-        }
-
-        let Some(control) = this.control() else {
-            panic!();
-        };
-        if n == control.len() {
-            return mem::take(this);
-        }
-
-        assert!(n <= control.len());
-
-        let mut first = this.clone();
-        first.len = n;
-
-        this.len -= n;
-        this.base = unsafe { NonNull::new_unchecked(this.base.as_ptr().add(n)) };
-
-        first
-    }
-    */
 
     /// Returns a new `Val` referencing a sub-range of `this`.
     ///
@@ -156,7 +142,7 @@ impl Val {
             return this.clone();
         }
 
-        let control = unsafe { this.0.unwrap().as_mut() };
+        let control = unsafe { this.0.unwrap().as_ref() };
         let new_kind = match &control.kind {
             SharedKind::Owned(b) => {
                 control.refcount.set(control.refcount.get() + 1);
@@ -192,6 +178,10 @@ impl Val {
         Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
     }
 
+    /// Convert a Rust slice of a `Val` into a new `Val` that shares the backing
+    /// memory.
+    ///
+    /// This will panic if `slice` does not actually point into `this`.
     pub fn slice_ref(this: &Val, slice: &[u8]) -> Self {
         if slice.is_empty() {
             return Self::new();
@@ -231,47 +221,6 @@ impl Val {
 
         Self(Some(unsafe { NonNull::new_unchecked(Box::into_raw(new_control)) }))
     }
-    /*
-
-    /// Returns the last byte in the slice, simultaneously shortening the slice
-    /// by one byte. If the slice is empty, returns `None`.
-    ///
-    /// If the slice becomes empty, this may cause deallocation of the backing
-    /// memory if this is the last reference to it.
-    pub fn pop_last(this: &mut Val) -> Option<u8> {
-        if this.len == 0 {
-            None
-        } else {
-            let result = unsafe { *this.base.as_ptr().add(this.len - 1) };
-            this.len -= 1;
-            if this.len == 0 {
-                unsafe { this.decrement_ref(); }
-            }
-            Some(result)
-        }
-    }
-
-
-    /// Returns the first byte in teh slice, simultaneously moving the slice's
-    /// base address up to exclude it (and reducing the length). If the slice is
-    /// empty, returns `None`.
-    ///
-    /// If the slice becomes empty, this may cause deallocation of the backing
-    /// memory if this is the last reference to it.
-    pub fn pop_front(this: &mut Val) -> Option<u8> {
-        if this.len == 0 {
-            None
-        } else {
-            let result = *unsafe { this.base.as_ref() };
-            this.base = unsafe { NonNull::new_unchecked(this.base.as_ptr().add(1)) };
-            this.len -= 1;
-            if this.len == 0 {
-                unsafe { this.decrement_ref(); }
-            }
-            Some(result)
-        }
-    }
-    */
 
     /// Decrements the reference count of the control block, if any, and zeroes
     /// the control block pointer.
@@ -400,7 +349,7 @@ impl Deref for Val {
     fn deref(&self) -> &[u8] {
         if let Some(control) = self.control() {
             match &control.kind {
-                SharedKind::Owned(b) => &*b,
+                SharedKind::Owned(b) => b,
                 SharedKind::Sub { base, len, .. } => {
                     unsafe {
                         core::slice::from_raw_parts(base.as_ptr(), *len)
@@ -434,6 +383,7 @@ impl Drop for Val {
 
 #[cfg(test)]
 mod tests {
+    use std::mem;
     use super::*;
 
     #[track_caller]
