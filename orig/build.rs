@@ -5,5 +5,6 @@ fn main() {
 
     cc::Build::new()
         .file("src/tcl.c")
+        .debug(true)
         .compile("partcl");
 }
