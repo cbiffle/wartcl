@@ -2,13 +2,65 @@
 //! code complexity, and performance, in that order. That is, it's mostly
 //! intended to be small, but with readable code and ok performance.
 //!
+//! `wartcl` has been used on a Cortex-M0 for basic boundary scan and
+//! manufacturing test scripting. In that application it required 10 kiB of
+//! flash and 8 kiB of RAM.
+//!
+//! # Putting this in your application
+//!
+//! `wartcl` is designed to be very easy to embed in a larger application,
+//! including exposing custom commands. Here's a toy example:
+//!
+//! ```rust
+//! let mut tcl = wartcl::Env::default();
+//!
+//! tcl.register(b"my-custom-command", 1, |_, _| {
+//!     println!("hi!");
+//!     Ok(wartcl::empty())
+//! });
+//!
+//! match tcl.eval(b"my-custom-command\n") {
+//!     Ok(_) => {
+//!         // the script worked!
+//!     }
+//!     Err(e) => panic!("script failed: {e:?}"),
+//! }
+//! ```
+//!
+//! # The `wartcl` language
+//!
+//! The language implemented by `wartcl` is intended to be very close to Tcl,
+//! but smaller. Most (all?) `wartcl` programs should be valid Tcl programs, but
+//! not vice versa.
+//!
+//! `wartcl` supports the following Tcl-like commands by default. Some are
+//! controlled by a Cargo feature in case you want to disable them.
+//!
+//! - `break`
+//! - `continue`
+//! - `+`, `-`, `*`, `/` (feature `arithmetic`)
+//! - `>`, `>=`, `<`, `<=`, `==`, `!=` (feature `comparison`)
+//! - `if`
+//! - `incr` (feature `incr`)
+//! - `proc` (feature `proc`)
+//! - `puts` (feature `std`)
+//! - `return`
+//! - `set`
+//! - `subst`
+//! - `while`
+//!
+//! Probably the biggest difference is that the `expr` command, which does
+//! math-style expression parsing, is not included. You can still do math, but
+//! in prefix notation; instead of `expr 2*(3+4)`, you must write `* 2 [+ 3 4]`.
+//! This isn't ideal, but expression parsing is _big_ and `wartcl` is small.
+//!
 //! # Implementation design and theory of operation
 //!
-//! The Tcl language is one example the principle "everything is a string." All
-//! of Tcl's data types are --- notionally, at least --- represented as strings,
-//! and they can be converted from one to the other by parsing. Modern Tcl
-//! implementations provide this illusion while using more efficient
-//! representations under the hood.
+//! The Tcl language is an extended meditation on the idea "everything is a
+//! string." All of Tcl's data types are --- notionally, at least ---
+//! represented as strings, and they can be converted from one to the other by
+//! parsing. Modern Tcl implementations provide this illusion while using more
+//! efficient representations under the hood.
 //!
 //! `wartcl` takes it literally. Everything is a string, a heap-allocated
 //! sequence of human-readable bytes, encoded in either ASCII (if you leave the
@@ -70,7 +122,7 @@ pub type Int = i64;
 #[cfg(not(feature = "i64"))]
 pub type Int = i32;
 
-/// Interpreter state.
+/// An instance of the interpreter, the "Tcl machine."
 ///
 /// To run a program, you need one of these. You can create one containing the
 /// standard set of commands using `Env::default()`, and then call `eval` as
@@ -322,6 +374,11 @@ pub fn int(mut v: &Value) -> Int {
     if negative { -value } else { value }
 }
 
+/// Formats an integer as a decimal string.
+///
+/// There is decimal formatting code in `core`, of course, but it just keeps
+/// getting bigger with every toolchain revision. So, we provide our own,
+/// optimized for size.
 pub fn int_value(x: Int) -> OwnedValue {
     let mut text = Vec::new();
     let negative = x < 0;
@@ -384,6 +441,7 @@ fn is_splice_end(c: u8) -> bool { b"\t\n\r ;".contains(&c) }
 /// treating a slice of bytes as a value vs just any old bytes.
 pub type Value = [u8];
 
+/// Shorthand type for a `Value` that you own.
 pub type OwnedValue = Box<Value>;
 
 /// Produces a newly allocated string value that contains all the elements of
@@ -417,6 +475,8 @@ fn skip_leading_whitespace(s: &mut &Value) {
     }
 }
 
+/// The input tokenizer, exposed mostly because it can be useful for building a
+/// REPL.
 pub struct Tokenizer<'a> {
     input: &'a [u8],
     quote: bool,
@@ -557,6 +617,7 @@ impl<'a> Iterator for Tokenizer<'a> {
     }
 }
 
+/// A token, produced by the `Tokenizer`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Token<'a> {
     CmdSep(u8),

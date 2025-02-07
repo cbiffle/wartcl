@@ -21,7 +21,7 @@ they're observed.
 
 Compared to Tcl a lot of things are missing:
 
-- Arrays
+- Arrays (i.e. fast lists)
 - Globals/upvars
 - Floating point math
 - Fancy return options
