@@ -31,9 +31,8 @@ pub fn cmd_incr(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
 /// Implementation of the `puts` standard command.
 #[cfg(any(test, feature = "std"))]
 pub fn cmd_puts(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
-    let str = mem::take(&mut args[1]);
-    println!("{}", String::from_utf8_lossy(&str));
-    Ok(str)
+    println!("{}", String::from_utf8_lossy(&args[1]));
+    Ok(empty())
 }
 
 /// Implementation of the `proc` standard command.

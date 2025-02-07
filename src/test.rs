@@ -30,6 +30,8 @@
 // several subtle bugs sneak through (either in their implementation, or in my
 // reimplementation). The check_eval_err tests fix this.
 
+use core::cell::RefCell;
+
 use super::*;
 
 #[track_caller]
@@ -522,15 +524,28 @@ fn test_1_subst() {
     check_eval(None, b"set q {\"}; subst $q[]hello[]$q", b"\"hello\"");
     check_eval(None, b"set x {\n\thello\n}", b"\n\thello\n");
 
-    /* Some puts commands */
-    check_eval(None, b"puts {[}[]hello[]{]}", b"[hello]");
-    check_eval(None, b"puts {{hello}}", b"{hello}");
+    // The puts command normally write to stdout directly. Test it by overriding
+    // that.
+    {
+        let (mut e, output) = make_env_with_output_collector();
+        check_eval(Some(&mut e), b"puts {[}[]hello[]{]}", b"");
+        check_eval(Some(&mut e), b"puts {{hello}}", b"");
+        assert_eq!(output.borrow().as_slice(), b"[hello]\n{hello}\n");
+    }
 }
 
 #[test]
 fn test_2_flow() {
-    check_eval(None, b"if {< 1 2} {puts A} else {puts B}", b"A");
-    check_eval(None, b"if {> 1 2} {puts A} else {puts B}", b"B");
+    {
+        let (mut e, output) = make_env_with_output_collector();
+        check_eval(Some(&mut e), b"if {< 1 2} {puts A} else {puts B}", b"");
+        assert_eq!(output.borrow().as_slice(), b"A\n");
+    }
+    {
+        let (mut e, output) = make_env_with_output_collector();
+        check_eval(Some(&mut e), b"if {> 1 2} {puts A} else {puts B}", b"");
+        assert_eq!(output.borrow().as_slice(), b"B\n");
+    }
     // DEVIATION: partcl returns 0 if no branch passes, standard says empty
     // string -- I choose empty string.
     check_eval(None, b"if {> 1 2} {puts A}", b"");
@@ -667,4 +682,18 @@ fn test_3_math() {
           incr x",
         b"2",
     );
+}
+
+fn make_env_with_output_collector() -> (Env, Rc<RefCell<Vec<u8>>>) {
+    let mut e = Env::default();
+    let output = Rc::new(RefCell::new(vec![]));
+    let o = output.clone();
+    e.register(b"puts", 2, move |_, args| {
+        let mut v = o.borrow_mut();
+        v.extend_from_slice(&args[1]);
+        v.push(b'\n');
+        // Like standard puts, we return empty.
+        Ok(empty())
+    });
+    (e, output)
 }
