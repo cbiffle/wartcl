@@ -1,3 +1,12 @@
+//! Built-in commands.
+//!
+//! These are automatically registered in any `Env` created using
+//! `Env::default()`. You could also use `Env::empty()` and then call
+//! `register_all` to load all of these commands.
+//!
+//! If you'd like to pick and choose, you can also pass individual functions to
+//! `register` by hand.
+
 use super::*;
 
 /// Implementation of the `set` standard command.
@@ -17,6 +26,7 @@ pub fn cmd_subst(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
     tcl.subst(s)
 }
 
+/// Implementation of the `incr` standard command (feature `incr`).
 #[cfg(feature = "incr")]
 pub fn cmd_incr(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
     let name = mem::take(&mut args[1]);
@@ -28,14 +38,14 @@ pub fn cmd_incr(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
     Ok(new)
 }
 
-/// Implementation of the `puts` standard command.
+/// Implementation of the `puts` standard command (feature `std`).
 #[cfg(any(test, feature = "std"))]
 pub fn cmd_puts(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
     println!("{}", String::from_utf8_lossy(&args[1]));
     Ok(empty())
 }
 
-/// Implementation of the `proc` standard command.
+/// Implementation of the `proc` standard command (feature `proc`).
 #[cfg(feature = "proc")]
 pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
     let body = mem::take(&mut args[3]);
@@ -112,7 +122,6 @@ pub fn cmd_while(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 
     let cond = mem::take(&mut args[1]);
 
-    debug!("while body = {:?}", String::from_utf8_lossy(&body));
     loop {
         if int(&tcl.eval(&cond)?) == 0 {
             break;
@@ -130,7 +139,24 @@ pub fn cmd_while(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 }
 
 /// Implementation of the standard math commands; parses its first argument to
-/// choose the operation.
+/// choose the operation (features `arithmetic` or `comparison`).
+///
+/// The specific list of operators this implements is:
+///
+/// - With feature `arithmetic`: `+` `-` `*` `/` 
+/// - With feature `comparison`: `==` `!=` `<` `<=` `>` `>=`
+///
+/// You can register this by hand by e.g.
+///
+/// ```
+/// let mut tcl = wartcl::Env::empty();
+/// tcl.register(b"+", 3, wartcl::cmd::cmd_math);
+/// tcl.register(b"-", 3, wartcl::cmd::cmd_math);
+/// // and so on
+/// ```
+///
+/// If you register this command under an unsupported name, it will panic when
+/// you use it.
 #[cfg(any(feature = "arithmetic", feature = "comparison"))]
 pub fn cmd_math(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
     let bval = &args[2];
@@ -171,9 +197,18 @@ pub fn cmd_math(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 
 /// Type of a command implemented with a stateless function pointer, as opposed
 /// to a general closure.
-type StaticCmd = fn(&mut Env, &mut [OwnedValue]) -> Result<OwnedValue, FlowChange>;
+pub type StaticCmd = fn(&mut Env, &mut [OwnedValue]) -> Result<OwnedValue, FlowChange>;
 
-static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
+/// Fixed table of standard commands, in an unspecified order. The contents
+/// depend on the chosen Cargo features.
+///
+/// Each entry in this table has the form `(name, arity, fnptr)`. All names in
+/// this table are guaranteed unique.
+///
+/// You generally don't need to access this table directly, since `register_all`
+/// and `Env::default()` will both do it for you. But in case you're doing
+/// something unusual, here you go.
+pub static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
     // So far I consider these commands universal, and haven't felt the need to
     // make them optional. That could be changed.
     (b"set", 0, cmd_set),
@@ -221,6 +256,8 @@ static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
 ];
 
 /// Registers all standard built-in commands with `env`.
+///
+/// You do not need to call this if the `env` was created with `Env::default()`.
 ///
 /// The exact commands registered depend on the build options.
 pub fn register_all(env: &mut Env) {

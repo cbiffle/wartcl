@@ -100,19 +100,13 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![forbid(unsafe_code)]
 
+pub mod cmd;
+
 extern crate alloc;
 use core::mem;
 use alloc::rc::Rc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-
-/// Internal macro to make it easier to comment/uncomment a bunch of printlns
-/// all in one place.
-macro_rules! debug {
-    ($($x:tt)*) => { /* println!($($x)*) */ };
-}
-
-mod cmd;
 
 /// Integer type used internally for arithmetic.
 #[cfg(feature = "i64")]
@@ -130,7 +124,17 @@ pub type Int = i32;
 ///
 /// Dropping it will deallocate all associated state.
 pub struct Env {
+    /// Current active execution scope. This is where variables are looked up.
+    /// It gets replaced when procs are called, and restored when they return.
     scope: Scope,
+
+    /// Linked list of registered commands.
+    ///
+    /// This is a linked list and not a `Vec` for heap efficiency reasons. The
+    /// linked list costs one pointer more than a packed array of `Cmd`, but
+    /// never over-allocates unused memory. `Vec`, on the other hand, grows in
+    /// large increments, so pushing a single additional command may double its
+    /// memory usage.
     cmds: Option<Box<Cmd>>,
 }
 
@@ -138,13 +142,23 @@ impl Default for Env {
     /// Creates a new `Env` environment and initializes it with the standard
     /// bundled command set before returning it.
     fn default() -> Self {
-        let mut env = Env { scope: Scope::default(), cmds: None };
+        let mut env = Env::empty();
         cmd::register_all(&mut env);
         env
     }
 }
 
 impl Env {
+    /// Creates an environment with no commands registered.
+    ///
+    /// You can load commands by calling `register`.
+    pub fn empty() -> Self {
+        Self {
+            scope: Scope::default(),
+            cmds: None,
+        }
+    }
+
     /// Adds a command to `self`, under the name `name`, expecting `arity`
     /// arguments (including its own name!), and implemented by the Rust
     /// function `function`.
@@ -271,6 +285,8 @@ impl Env {
         Ok(last_result.unwrap_or_default())
     }
 
+    /// Utility function for finding an existing variable binding by name, and
+    /// _not_ creating a new one. If the name is unbound, returns `None`.
     fn find_var_mut(&mut self, name: &Value) -> Option<&mut Var> {
         let mut var = self.scope.vars.as_mut();
         while let Some(v) = var.take() {
@@ -284,6 +300,12 @@ impl Env {
 
     /// Sets a variable named `name` to `value` in the current innermost scope,
     /// creating it if it doesn't exist.
+    ///
+    /// If the variable exists, `name` winds up being freed. This might seem like
+    /// a good reason for it to be borrowed (`&Value`) instead. But in practice,
+    /// the only case where it would be borrowed from a long-lived allocation is
+    /// also the only case where we always create new bindings: in `cmd_proc`.
+    /// So this keeps the code simpler at no performance cost.
     pub fn set_or_create_var(&mut self, name: OwnedValue, value: OwnedValue) {
         match self.find_var_mut(&name) {
             Some(v) => v.value = value,
@@ -470,6 +492,7 @@ pub enum FlowChange {
 static C_END: [u8; 3] = *b"\n\r;";
 static C_SPECIAL: [u8; 4] = *b"$[]\"";
 
+/// Checks if a character ends a splice (variable interpolation) operation.
 #[inline(never)]
 fn is_splice_end(c: u8) -> bool { b"\t\n\r ;".contains(&c) }
 
@@ -659,9 +682,14 @@ impl<'a> Iterator for Tokenizer<'a> {
 /// A token, produced by the `Tokenizer`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Token<'a> {
+    /// A command separator character (e.g. a newline or semicolon). Indicates
+    /// that the end of a command has been found and triggers evaluation.
     CmdSep(u8),
+    /// A byte sequence culminating in the end of a word.
     Word(&'a [u8]),
+    /// A byte sequence _not_ culminating in the end of a word.
     Part(&'a [u8]),
+    /// Code is not valid.
     Error,
 }
 
