@@ -481,8 +481,7 @@ fn test_1_subst() {
     check_eval_err(None, b"subst $foo", FlowChange::Error);
     check_eval(None, b"set foo {}; subst $foo", b"");
 
-    if false {
-        // TODO
+    {
         let mut tcl = Env::default();
         tcl.set_or_create_var((*b"foo").into(), (*b"bar").into());
         tcl.set_or_create_var((*b"bar").into(), (*b"baz").into());

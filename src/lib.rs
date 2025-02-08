@@ -224,20 +224,25 @@ impl Env {
                     // Run non-empty command, treating an empty command as a
                     // no-op.
                     if let Some(cmdname) = command.first() {
-                        let mut cmd = self.cmds.as_deref();
-                        let mut found = false;
+                        // Throw away the last result, so we can use the Option
+                        // as a "command was executed" flag.
+                        last_result = None;
 
+                        let mut cmd = self.cmds.as_deref();
                         while let Some(c) = cmd.take() {
                             if &c.name == cmdname
                                 && (c.arity == 0 || c.arity == command.len())
                             {
-                                found = true;
                                 // Command implementations are in Rcs, so that
                                 // we can retain an executing command even if it
                                 // changes the interpreter's internal state.
                                 // Clone this Rc to un-borrow the interpreter.
                                 let f = Rc::clone(&c.function);
                                 last_result = Some(f(self, &mut command)?);
+                                // The command is allowed to have made arbitrary
+                                // changes to the arguments (typically by taking
+                                // ownership of them), so reset the vec to a
+                                // known state:
                                 command.clear();
                                 break;
                             }
@@ -245,7 +250,9 @@ impl Env {
                             cmd = c.next.as_deref();
                         }
 
-                        if !found {
+                        // If the last result is still missing after the loop,
+                        // it means we didn't find a command.
+                        if last_result.is_none() {
                             return Err(FlowChange::Error);
                         }
 
