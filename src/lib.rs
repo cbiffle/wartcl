@@ -489,12 +489,9 @@ pub enum FlowChange {
     Again,
 }
 
-static C_END: [u8; 3] = *b"\n\r;";
-static C_SPECIAL: [u8; 4] = *b"$[]\"";
-
 /// Checks if a character ends a splice (variable interpolation) operation.
 #[inline(never)]
-fn is_splice_end(c: u8) -> bool { b"\t\n\r ;".contains(&c) }
+fn is_splice_end(c: u8) -> bool { matches!(c, b'\t' | b'\n' | b'\r' | b' ' | b';') }
 
 /// This is a little weird, but it's convenient below to indicate where we're
 /// treating a slice of bytes as a value vs just any old bytes.
@@ -528,12 +525,8 @@ pub fn empty() -> OwnedValue {
 
 /// Updates `s` by stripping off leading (horizontal) whitespace characters.
 fn skip_leading_whitespace(s: &mut &Value) {
-    while let Some((first, next)) = s.split_first() {
-        if b" \t".contains(first) {
-            *s = next;
-        } else {
-            break;
-        }
+    while let Some((b' ' | b'\t', next)) = s.split_first() {
+        *s = next;
     }
 }
 
@@ -565,15 +558,11 @@ impl<'a> Iterator for Tokenizer<'a> {
 
         // Separate first character and handle end-of-input.
         let Some((&first, rest)) = self.input.split_first() else {
-            return if self.quote {
-                Some(Token::Error)
-            }  else {
-                None
-            };
+            return self.quote.then_some(Token::Error);
         };
 
         // Detect, and skip, command separators.
-        if C_END.contains(&first) {
+        if matches!(first, b'\n' | b'\r' | b';') {
             self.input = rest;
             return Some(Token::CmdSep(first));
         }
@@ -664,8 +653,8 @@ impl<'a> Iterator for Tokenizer<'a> {
                 // Note that we are splitting the input, _not_ rest, because we
                 // want to include the leading character.
                 self.input.iter().position(|c| {
-                    C_SPECIAL.contains(c)
-                        || (!self.quote && (b"{}".contains(c) || is_splice_end(*c)))
+                    matches!(c, b'$' | b'[' | b']' | b'"')
+                        || (!self.quote && (matches!(c, b'{' | b'}') || is_splice_end(*c)))
                 }).unwrap_or(self.input.len())
             }
         };
