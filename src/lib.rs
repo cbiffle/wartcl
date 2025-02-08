@@ -320,12 +320,10 @@ impl Env {
         }
     }
 
-    /// Gets a copy of the contents of an existing variable, or returns
+    /// Gets a reference to the contents of an existing variable, or returns
     /// `None` if it doesn't exist.
-    pub fn get_existing_var(&mut self, name: &Value) -> Option<OwnedValue> {
-        let var = self.find_var_mut(name)?;
-
-        Some(var.value.clone())
+    pub fn get_existing_var(&mut self, name: &Value) -> Option<&Value> {
+        self.find_var_mut(name).map(|v| &*v.value)
     }
 
     /// Performs a single substitution step on `s`, returning the result on

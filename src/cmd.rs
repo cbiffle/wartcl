@@ -16,7 +16,9 @@ pub fn cmd_set(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Flo
         tcl.set_or_create_var(name, new_value.clone());
         Ok(mem::take(new_value))
     } else {
-        tcl.get_existing_var(&name).ok_or(FlowChange::Error)
+        tcl.get_existing_var(&name)
+            .map(OwnedValue::from)
+            .ok_or(FlowChange::Error)
     }
 }
 
@@ -31,7 +33,7 @@ pub fn cmd_subst(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 pub fn cmd_incr(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
     let name = mem::take(&mut args[1]);
     let current_int = tcl.get_existing_var(&name)
-        .map(|v| int(&v))
+        .map(int)
         .unwrap_or(0);
     let new = int_value(current_int + 1);
     tcl.set_or_create_var(name, new.clone());

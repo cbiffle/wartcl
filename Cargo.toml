@@ -2,7 +2,7 @@ workspace = { members = ["orig"] }
 
 [package]
 name = "wartcl"
-version = "0.1.3"
+version = "0.2.0-dev.0"
 edition = "2021"
 license = "MPL-2.0"
 description = "A minimal embeddable Tcl-like language"
