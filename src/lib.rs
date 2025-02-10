@@ -270,6 +270,10 @@ impl Env {
                             return Err(FlowChange::Error);
                         }
 
+                        // All paths to this point should have resulted in us
+                        // emptying the command vec -- either because it was
+                        // empty (a no-op command) or because we executed it.
+                        // Anything else is a bug in this function.
                         debug_assert!(command.is_empty());
                     }
 

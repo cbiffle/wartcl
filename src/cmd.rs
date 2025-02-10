@@ -13,9 +13,13 @@ use super::*;
 pub fn cmd_set(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
     let name = mem::take(&mut args[1]);
     if let Some(new_value) = args.get_mut(2) {
+        // `set` _with_ a new value creates or updates a binding, and returns
+        // the value, so we must copy.
         tcl.set_or_create_var(name, new_value.clone());
         Ok(mem::take(new_value))
     } else {
+        // `set` without a new value returns the contents of an existing
+        // binding, or fails if no such binding exists.
         tcl.get_existing_var(&name)
             .map(OwnedValue::from)
             .ok_or(FlowChange::Error)
@@ -32,10 +36,14 @@ pub fn cmd_subst(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 #[cfg(feature = "incr")]
 pub fn cmd_incr(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
     let name = mem::take(&mut args[1]);
+    // If the binding is missing, `incr` will treat it as containing zero, and
+    // create it below.
     let current_int = tcl.get_existing_var(&name)
         .map(int)
         .unwrap_or(0);
     let new = int_value(current_int + 1);
+    // Because `incr` returns the updated value, we have to clone the new
+    // string.
     tcl.set_or_create_var(name, new.clone());
     Ok(new)
 }
