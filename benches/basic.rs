@@ -49,17 +49,21 @@ pub fn benchmark(c: &mut Criterion) {
     c.benchmark_group("call-proc")
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
-            tcl.eval( b"proc testproc {x y z} { }").unwrap();
+            tcl.eval( b"proc testproc1 {x y z} { testproc2 g h i }").unwrap();
+            tcl.eval( b"proc testproc2 {x y z} { testproc3 d e f }").unwrap();
+            tcl.eval( b"proc testproc3 {x y z} { }").unwrap();
             b.iter(move || {
-                let r = tcl.eval(b"testproc a b c");
+                let r = tcl.eval(b"testproc1 a b c");
                 assert!(r.is_ok());
             })
         })
         .bench_function("partcl", |b| {
             let mut tcl = partcl_wrapper::create();
-            tcl.eval(c"proc testproc {x y z} { }");
+            tcl.eval(c"proc testproc1 {x y z} { testproc2 g h i }");
+            tcl.eval(c"proc testproc2 {x y z} { testproc3 d e f }");
+            tcl.eval(c"proc testproc3 {x y z} { }");
             b.iter(move || {
-                let r = tcl.eval(c"testproc a b c");
+                let r = tcl.eval(c"testproc1 a b c");
                 assert_eq!(r, 1);
             })
         });
