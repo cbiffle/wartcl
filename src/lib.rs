@@ -173,17 +173,12 @@ impl Env {
         function: impl Fn(&mut Env, &mut [OwnedValue])
             -> Result<OwnedValue, FlowChange> + 'static,
     ) {
-        self.register_mono(name, arity, Rc::new(function))
+        self.reg_mono(name, arity, Rc::new(function))
     }
 
     /// Monomorphized version of `register` so that the code below doesn't get
     /// repeated for every function type.
-    fn register_mono(
-        &mut self,
-        name: &Value,
-        arity: usize,
-        function: Rc<FnDyn>,
-    ) {
+    fn reg_mono(&mut self, name: &Value, arity: usize, function: Rc<FnDyn>) {
         let next = self.cmds.take();
         self.cmds = Some(Box::new(Cmd {
             name: name.into(),
@@ -536,12 +531,12 @@ fn skip_leading_whitespace(s: &mut &Value) {
 /// REPL.
 pub struct Tokenizer<'a> {
     input: &'a [u8],
-    quote: bool,
+    in_quoted_string: bool,
 }
 
 impl<'a> Tokenizer<'a> {
     pub fn new(input: &'a [u8]) -> Self {
-        Self { input, quote: false }
+        Self { input, in_quoted_string: false }
     }
 
     pub fn at_end(&self) -> bool {
@@ -554,13 +549,13 @@ impl<'a> Iterator for Tokenizer<'a> {
 
     fn next(&mut self) -> Option<Token<'a>> {
         // We are whitespace insensitive ... except inside a quoted string.
-        if !self.quote {
+        if !self.in_quoted_string {
             skip_leading_whitespace(&mut self.input);
         }
 
         // Separate first character and handle end-of-input.
         let Some((&first, rest)) = self.input.split_first() else {
-            return self.quote.then_some(Token::Error);
+            return self.in_quoted_string.then_some(Token::Error);
         };
 
         // Detect, and skip, command separators.
@@ -569,7 +564,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             return Some(Token::CmdSep(first));
         }
 
-        let taken = match (first, rest.first(), self.quote) {
+        let taken = match (first, rest.first(), self.in_quoted_string) {
             // Characters that cannot legally appear at the end of input.
             (b'$' | b'[' | b'{', None, _) => {
                 self.input = rest;
@@ -588,12 +583,11 @@ impl<'a> Iterator for Tokenizer<'a> {
             }
             // Variable name.
             (b'$', Some(_), _) => {
-                let mut subtok = Tokenizer::new(rest);
-                match subtok.next() {
+                match Tokenizer::new(rest).next() {
                     Some(Token::Word(name)) => {
                         let (name, rest) = self.input.split_at(name.len() + 1);
                         self.input = rest;
-                        return Some(if self.quote {
+                        return Some(if self.in_quoted_string {
                             Token::Part(name)
                         } else {
                             Token::Word(name)
@@ -630,10 +624,10 @@ impl<'a> Iterator for Tokenizer<'a> {
                 }
             }
             (b'"', nxt, _) => {
-                self.quote = !self.quote;
+                self.in_quoted_string = !self.in_quoted_string;
                 self.input = rest;
 
-                if self.quote {
+                if self.in_quoted_string {
                     // New quoted string. Return an empty part as a hack to
                     // restart tokenization with the quote flag on.
                     return Some(Token::Part(b""));
@@ -656,13 +650,13 @@ impl<'a> Iterator for Tokenizer<'a> {
                 // want to include the leading character.
                 self.input.iter().position(|c| {
                     matches!(c, b'$' | b'[' | b']' | b'"')
-                        || (!self.quote && (matches!(c, b'{' | b'}') || is_splice_end(*c)))
+                        || (!self.in_quoted_string && (matches!(c, b'{' | b'}') || is_splice_end(*c)))
                 }).unwrap_or(self.input.len())
             }
         };
         let (word, rest) = self.input.split_at(taken);
         self.input = rest;
-        if self.quote || !self.input.first().map(|&c| is_splice_end(c)).unwrap_or(true) {
+        if self.in_quoted_string || !self.input.first().is_none_or(|&c| is_splice_end(c)) {
             Some(Token::Part(word))
         } else {
             Some(Token::Word(word))
