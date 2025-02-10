@@ -58,18 +58,29 @@ pub fn cmd_puts(_tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, F
 /// Implementation of the `proc` standard command (feature `proc`).
 #[cfg(feature = "proc")]
 pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
+    // Take the body by-val before we start making references into the args list
+    // (to do otherwise breaks aliasing rules).
     let body = mem::take(&mut args[3]);
+
     let name = &args[1];
+    let param_names = parse_list(&args[2]);
 
-    let parsed_params = parse_list(&args[2]);
+    tcl.register(name, param_names.len() + 1, move |tcl, args| {
+        // Because we've bound this command to a specific arity, the evaluator
+        // should check the arg count. If it fails to do so, this assert will
+        // trip in tests.
+        debug_assert!(args.len() == param_names.len() + 1);
 
-    tcl.register(name, 0, move |tcl, act_args| {
+        // Thread a new scope onto the return chain. Since this moves the
+        // existing bindings into the heap, we start empty.
         tcl.scope.parent = Some(Box::new(mem::take(&mut tcl.scope)));
 
-        for (i, param) in parsed_params.iter().enumerate() {
-            let v = mem::take(act_args.get_mut(i + 1).ok_or(FlowChange::Error)?);
-            tcl.set_or_create_var(param.clone(), v);
+        // Bind all parameters in this new scope.
+        for (name, val) in param_names.iter().zip(&mut args[1..]) {
+            tcl.set_or_create_var(name.clone(), mem::take(val));
         }
+
+        // Run the procedure.
         let r = tcl.eval(&body);
 
         tcl.scope = *tcl.scope.parent.take().unwrap();
