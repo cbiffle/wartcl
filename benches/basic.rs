@@ -132,6 +132,21 @@ pub fn benchmark(c: &mut Criterion) {
                 assert_eq!(r, 1);
             })
         });
+    c.benchmark_group("incr")
+        .bench_function("wartcl", |b| {
+            let mut tcl = wartcl::Env::default();
+            tcl.eval(b"\
+                proc test {} { \
+                    set x 0; \
+                    while {< $x 1000} { \
+                        incr x; \
+                    }; \
+                }").unwrap();
+            b.iter(move || {
+                let r = tcl.eval(b"test");
+                assert!(r.is_ok());
+            })
+        });
 }
 
 criterion_group!(benches, benchmark);
