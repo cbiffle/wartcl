@@ -1,33 +1,52 @@
 use criterion::{criterion_group, criterion_main, Criterion};
+use wartcl::FlowChange;
 
 pub fn benchmark(c: &mut Criterion) {
-    c.benchmark_group("eval(subst hello)")
+    c.benchmark_group("return")
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
             b.iter(move || {
-                let r = tcl.eval( b"subst hello");
-                assert!(r.is_ok());
+                let r = tcl.eval(b"return hello");
+                if let Err(FlowChange::Return(_)) = r {
+                    // yay
+                } else {
+                    panic!("expected return, got: {r:?}");
+                }
             })
         })
         .bench_function("partcl", |b| {
             let mut tcl = partcl_wrapper::create();
             b.iter(move || {
-                let r = tcl.eval(c"subst hello");
-                assert_eq!(r, 1);
+                let r = tcl.eval(c"return");
+                assert_eq!(r, 2);
             })
         });
     c.benchmark_group("nested-ifs")
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
             b.iter(move || {
-                let r = tcl.eval( b"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}");
+                let r = tcl.eval(b"\
+                    if {== 0 0} {
+                        if {== 0 0} {
+                            if {== 0 0} {
+                            }
+                        }
+                    }"
+                );
                 assert!(r.is_ok());
             })
         })
         .bench_function("partcl", |b| {
             let mut tcl = partcl_wrapper::create();
             b.iter(move || {
-                let r = tcl.eval(c"if {== 0 0} {if {== 0 0} {if {== 0 0} {}}}");
+                let r = tcl.eval(c"\
+                    if {== 0 0} {
+                        if {== 0 0} {
+                            if {== 0 0} {
+                            }
+                        }
+                    }"
+                );
                 assert_eq!(r, 1);
             })
         });
