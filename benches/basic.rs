@@ -54,14 +54,14 @@ pub fn benchmark(c: &mut Criterion) {
         .bench_function("wartcl", |b| {
             let mut tcl = wartcl::Env::default();
             b.iter(move || {
-                let r = tcl.eval(b"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]");
+                let r = tcl.eval(b"set a 5; set b 7; - [* 4 [+ $a $b]] 1");
                 assert!(r.is_ok());
             })
         })
         .bench_function("partcl", |b| {
             let mut tcl = partcl_wrapper::create();
             b.iter(move || {
-                let r = tcl.eval(c"set a 5; set b 7; subst [- [* 4 [+ $a $b]] t]");
+                let r = tcl.eval(c"set a 5; set b 7; - [* 4 [+ $a $b]] 1");
                 assert_eq!(r, 1);
             })
         });
