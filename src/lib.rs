@@ -214,9 +214,9 @@ impl Env {
                 Some(Token::Error) => return Err(FlowChange::Error),
 
                 // Accumulate string pieces.
-                Some(Token::Part(w) | Token::Word(w)) => {
+                Some(Token::WordPart(w, terminal)) => {
                     let s = self.subst(w)?;
-                    if matches!(tok, Some(Token::Word(_))) {
+                    if terminal {
                         command.push(drain_and_flatten_string(&mut strpieces, s));
                     } else {
                         strpieces.push(s);
@@ -459,7 +459,7 @@ pub fn parse_list(v: &Value) -> Vec<OwnedValue> {
     let mut words = Vec::new();
 
     for tok in Tokenizer::new(v) {
-        if let Token::Word(text) = tok {
+        if let Token::WordPart(text, true) = tok {
             words.push(if text[0] == b'{' {
                 text[1..text.len() - 1].into()
             } else {
@@ -588,19 +588,14 @@ impl<'a> Iterator for Tokenizer<'a> {
             // Variable name.
             (b'$', Some(_), _) => {
                 match Tokenizer::new(rest).next() {
-                    Some(Token::Word(name)) => {
+                    Some(Token::WordPart(name, terminal)) => {
+                        // Re-slice the name to include the dollar sign.
                         let (name, rest) = self.input.split_at(name.len() + 1);
                         self.input = rest;
-                        return Some(if self.in_quoted_string {
-                            Token::Part(name)
-                        } else {
-                            Token::Word(name)
-                        });
-                    }
-                    Some(Token::Part(name)) => {
-                        let (name, rest) = self.input.split_at(name.len() + 1);
-                        self.input = rest;
-                        return Some(Token::Part(name));
+                        return Some(Token::WordPart(
+                            name,
+                            terminal && !self.in_quoted_string,
+                        ));
                     }
                     _ => {
                         self.input = rest;
@@ -634,12 +629,12 @@ impl<'a> Iterator for Tokenizer<'a> {
                 if self.in_quoted_string {
                     // New quoted string. Return an empty part as a hack to
                     // restart tokenization with the quote flag on.
-                    return Some(Token::Part(b""));
+                    return Some(Token::WordPart(b"", false));
                 } else {
                     // Leaving a quoted string.
                     return Some(match nxt {
-                        None => Token::Word(b""),
-                        Some(c) if is_splice_end(*c) => Token::Word(b""),
+                        None => Token::WordPart(b"", true),
+                        Some(c) if is_splice_end(*c) => Token::WordPart(b"", true),
                         _ => Token::Error,
                     });
                 }
@@ -660,11 +655,11 @@ impl<'a> Iterator for Tokenizer<'a> {
         };
         let (word, rest) = self.input.split_at(taken);
         self.input = rest;
-        if self.in_quoted_string || !self.input.first().is_none_or(|&c| is_splice_end(c)) {
-            Some(Token::Part(word))
-        } else {
-            Some(Token::Word(word))
-        }
+        Some(Token::WordPart(
+            word,
+            !self.in_quoted_string
+                && self.input.first().is_none_or(|&c| is_splice_end(c)),
+        ))
     }
 }
 
@@ -674,14 +669,12 @@ pub enum Token<'a> {
     /// A command separator character (e.g. a newline or semicolon). Indicates
     /// that the end of a command has been found and triggers evaluation.
     CmdSep(u8),
-    /// A byte sequence culminating in the end of a word.
-    Word(&'a [u8]),
-    /// A byte sequence _not_ culminating in the end of a word.
-    Part(&'a [u8]),
+    /// A byte sequence, which may (`true`) or may not (`false`) be the end of a
+    /// word.
+    WordPart(&'a [u8], bool),
     /// Code is not valid.
     Error,
 }
-
 
 /// A variable in a scope.
 struct Var {
