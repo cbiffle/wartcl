@@ -561,52 +561,43 @@ impl<'a> Iterator for Tokenizer<'a> {
         let Some((&first, rest)) = self.input.split_first() else {
             return self.in_quoted_string.then_some(Token::Error);
         };
+        let orig_input = mem::replace(&mut self.input, rest);
 
         // Detect, and skip, command separators.
         if matches!(first, b'\n' | b'\r' | b';') {
-            self.input = rest;
             return Some(Token::CmdSep(first));
         }
 
         let taken = match (first, rest.first(), self.in_quoted_string) {
             // Characters that cannot legally appear at the end of input.
-            (b'$' | b'[' | b'{', None, _) => {
-                self.input = rest;
-                return Some(Token::Error);
-            }
+            (b'$' | b'[' | b'{', None, _) => return Some(Token::Error),
+
             // Characters that cannot appear at the start of a word, outside of
             // quote mode.
-            (b']', _, _) | (b'}', _, false) => {
-                self.input = rest;
-                return Some(Token::Error);
-            }
+            (b']', _, _) | (b'}', _, false) => return Some(Token::Error),
+
             // Characters that cannot follow a dollar sign
-            (b'$', Some(b' ' | b'"'), _) => {
-                self.input = rest;
-                return Some(Token::Error);
-            }
+            (b'$', Some(b' ' | b'"'), _) => return Some(Token::Error),
+
             // Variable name.
             (b'$', Some(_), _) => {
                 match Tokenizer::new(rest).next() {
                     Some(Token::WordPart(name, terminal)) => {
                         // Re-slice the name to include the dollar sign.
-                        let (name, rest) = self.input.split_at(name.len() + 1);
+                        let (name, rest) = orig_input.split_at(name.len() + 1);
                         self.input = rest;
                         return Some(Token::WordPart(
                             name,
                             terminal && !self.in_quoted_string,
                         ));
                     }
-                    _ => {
-                        self.input = rest;
-                        return Some(Token::Error);
-                    }
+                    _ => return Some(Token::Error),
                 }
             }
             (b'[', _, _) | (b'{', _, false) => {
                 let last = if first == b'[' { b']' } else { b'}' };
                 let mut depth = 0;
-                let p = self.input.iter().position(|&c| {
+                let p = orig_input.iter().position(|&c| {
                     if c == first {
                         depth += 1;
                     } else if c == last {
@@ -624,7 +615,6 @@ impl<'a> Iterator for Tokenizer<'a> {
             }
             (b'"', nxt, _) => {
                 self.in_quoted_string = !self.in_quoted_string;
-                self.input = rest;
 
                 if self.in_quoted_string {
                     // New quoted string. Return an empty part as a hack to
@@ -647,13 +637,13 @@ impl<'a> Iterator for Tokenizer<'a> {
                 //
                 // Note that we are splitting the input, _not_ rest, because we
                 // want to include the leading character.
-                self.input.iter().position(|c| {
+                orig_input.iter().position(|c| {
                     matches!(c, b'$' | b'[' | b']' | b'"')
                         || (!self.in_quoted_string && (matches!(c, b'{' | b'}') || is_splice_end(*c)))
-                }).unwrap_or(self.input.len())
+                }).unwrap_or(orig_input.len())
             }
         };
-        let (word, rest) = self.input.split_at(taken);
+        let (word, rest) = orig_input.split_at(taken);
         self.input = rest;
         Some(Token::WordPart(
             word,
