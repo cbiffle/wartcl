@@ -214,8 +214,8 @@ impl Env {
                 Some(Token::Error) => return Err(FlowChange::Error),
 
                 // Accumulate string pieces.
-                Some(Token::WordPart(w, terminal)) => {
-                    let s = self.subst(w)?;
+                Some(Token::WordPart(w, r, terminal)) => {
+                    let s = self.subst_role(w, r)?;
                     if terminal {
                         command.push(drain_and_flatten_string(&mut strpieces, s));
                     } else {
@@ -325,38 +325,13 @@ impl Env {
         self.find_var_mut(name).map(|v| &*v.value)
     }
 
-    /// Performs a single substitution step on `s`, returning the result on
-    /// success.
-    ///
-    /// Substitution steps include peeling the outer curly braces off a braced
-    /// string, evaluating a square-bracketed subcommand, or processing a
-    /// dollar-sign variable splice.
-    fn subst(&mut self, s: &Value) -> Result<OwnedValue, FlowChange> {
-        match s.split_first() {
-            None => Ok(empty()),
-            Some((b'{', b"")) => Err(FlowChange::Error),
-            Some((b'{', rest)) => {
-                // TODO: picked up this shortcut behavior from partcl... this
-                // assumes that last char is `}` because the tokenizer will have
-                // run before we got here, and the tokenizer validates that.
-                // Should this function also validate that? I'm not sure.
-                Ok(rest[..rest.len() - 1].into())
-            }
-            Some((b'$', name)) => {
-                // TODO: this behavior is from partcl, and doesn't match real
-                // Tcl for code like:
-                //
-                //      set a b; set b 3; puts $[set a]
-                //
-                // Which in real Tcl prints "$b" and in partcl prints "3"
-                let mut subcmd = b"set ".to_vec();
-                subcmd.extend_from_slice(name);
-                self.eval(&subcmd)
-            }
-            Some((b'[', rest)) => {
-                self.eval(&rest[..rest.len() - 1])
-            }
-            _ => Ok(s.into()),
+    fn subst_role(&mut self, s: &Value, role: PartRole) -> Result<OwnedValue, FlowChange> {
+        match role {
+            PartRole::Text => Ok(s.into()),
+            PartRole::VarName => self.get_existing_var(s)
+                .map(OwnedValue::from)
+                .ok_or(FlowChange::Error),
+            PartRole::Script => self.eval(s),
         }
     }
 }
@@ -459,7 +434,7 @@ pub fn parse_list(v: &Value) -> Vec<OwnedValue> {
     let mut words = Vec::new();
 
     for tok in Tokenizer::new(v) {
-        if let Token::WordPart(text, true) = tok {
+        if let Token::WordPart(text, _, true) = tok {
             words.push(if text[0] == b'{' {
                 text[1..text.len() - 1].into()
             } else {
@@ -568,7 +543,7 @@ impl<'a> Iterator for Tokenizer<'a> {
             return Some(Token::CmdSep(first));
         }
 
-        let taken = match (first, rest.first(), self.in_quoted_string) {
+        let (taken, dropchar, role) = match (first, rest.first(), self.in_quoted_string) {
             // Characters that cannot legally appear at the end of input.
             (b'$' | b'[' | b'{', None, _) => return Some(Token::Error),
 
@@ -580,22 +555,34 @@ impl<'a> Iterator for Tokenizer<'a> {
             (b'$', Some(b' ' | b'"'), _) => return Some(Token::Error),
 
             // Variable name.
-            (b'$', Some(_), _) => {
-                match Tokenizer::new(rest).next() {
-                    Some(Token::WordPart(name, terminal)) => {
-                        // Re-slice the name to include the dollar sign.
-                        let (name, rest) = orig_input.split_at(name.len() + 1);
-                        self.input = rest;
+            (b'$', Some(b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'{'), _) => {
+                let mut sub = Tokenizer::new(rest);
+                match sub.next() {
+                    Some(Token::WordPart(name, PartRole::Text, terminal)) => {
+                        // Consume all input from the subtokenizer.
+                        self.input = sub.input;
+                        // Change the role and apply our context.
                         return Some(Token::WordPart(
                             name,
+                            PartRole::VarName,
                             terminal && !self.in_quoted_string,
                         ));
                     }
                     _ => return Some(Token::Error),
                 }
             }
+            // Dollar sign without a variable name.
+            (b'$', nxt, _) => return Some(Token::WordPart(
+                b"$",
+                PartRole::Text,
+                nxt.is_none(),
+            )),
             (b'[', _, _) | (b'{', _, false) => {
-                let last = if first == b'[' { b']' } else { b'}' };
+                let (last, role) = if first == b'[' {
+                    (b']', PartRole::Script)
+                } else {
+                    (b'}', PartRole::Text)
+                };
                 let mut depth = 0;
                 let p = orig_input.iter().position(|&c| {
                     if c == first {
@@ -606,7 +593,7 @@ impl<'a> Iterator for Tokenizer<'a> {
                     depth == 0
                 });
                 match p {
-                    Some(p) => p + 1,
+                    Some(p) => (p, true, role),
                     None => {
                         self.input = &[];
                         return Some(Token::Error);
@@ -619,12 +606,12 @@ impl<'a> Iterator for Tokenizer<'a> {
                 if self.in_quoted_string {
                     // New quoted string. Return an empty part as a hack to
                     // restart tokenization with the quote flag on.
-                    return Some(Token::WordPart(b"", false));
+                    return Some(Token::WordPart(b"", PartRole::Text, false));
                 } else {
                     // Leaving a quoted string.
                     return Some(match nxt {
-                        None => Token::WordPart(b"", true),
-                        Some(c) if is_splice_end(*c) => Token::WordPart(b"", true),
+                        None => Token::WordPart(b"", PartRole::Text, true),
+                        Some(c) if is_splice_end(*c) => Token::WordPart(b"", PartRole::Text, true),
                         _ => Token::Error,
                     });
                 }
@@ -637,16 +624,23 @@ impl<'a> Iterator for Tokenizer<'a> {
                 //
                 // Note that we are splitting the input, _not_ rest, because we
                 // want to include the leading character.
-                orig_input.iter().position(|c| {
+                let p = orig_input.iter().position(|c| {
                     matches!(c, b'$' | b'[' | b']' | b'"')
                         || (!self.in_quoted_string && (matches!(c, b'{' | b'}') || is_splice_end(*c)))
-                }).unwrap_or(orig_input.len())
+                }).unwrap_or(orig_input.len());
+                self.input = orig_input;
+                (p, false, PartRole::Text)
             }
         };
-        let (word, rest) = orig_input.split_at(taken);
+        let (word, rest) = self.input.split_at(taken);
         self.input = rest;
         Some(Token::WordPart(
-            word,
+            if dropchar {
+                &word[..word.len() - 1]
+            } else {
+                word
+            },
+            role,
             !self.in_quoted_string
                 && self.input.first().is_none_or(|&c| is_splice_end(c)),
         ))
@@ -661,9 +655,16 @@ pub enum Token<'a> {
     CmdSep(u8),
     /// A byte sequence, which may (`true`) or may not (`false`) be the end of a
     /// word.
-    WordPart(&'a [u8], bool),
+    WordPart(&'a [u8], PartRole, bool),
     /// Code is not valid.
     Error,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PartRole {
+    Text,
+    VarName,
+    Script,
 }
 
 /// A variable in a scope.

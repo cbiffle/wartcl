@@ -79,111 +79,111 @@ fn test_0_lexer2() {
     );
 
     // Regular words
-    check_tokens(b"foo", &[Token::WordPart(b"foo", true)]);
+    check_tokens(b"foo", &[Token::WordPart(b"foo", PartRole::Text, true)]);
     check_tokens(
         b"foo bar",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"bar", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar", PartRole::Text, true),
         ],
     );
     check_tokens(
         b"foo bar\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"bar", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo bar baz\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"bar", true),
-            Token::WordPart(b"baz", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar", PartRole::Text, true),
+            Token::WordPart(b"baz", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
-    // Variable substitution: easy case, whitespcae separated, basically just
+    // Variable substitution: easy case, whitespace separated, basically just
     // words.
     check_tokens(
         b"foo $bar $baz",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"$bar", true),
-            Token::WordPart(b"$baz", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar", PartRole::VarName, true),
+            Token::WordPart(b"baz", PartRole::VarName, true),
         ],
     );
     check_tokens(
         b"foo $bar$baz\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"$bar", false),
-            Token::WordPart(b"$baz", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar", PartRole::VarName, false),
+            Token::WordPart(b"baz", PartRole::VarName, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo ${bar baz}\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"${bar baz}", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar baz", PartRole::VarName, true),
             Token::CmdSep(b'\n'),
         ],
     );
 
     // Imbalanced braces/brackets
-    check_tokens(b"foo ]\n", &[Token::WordPart(b"foo", true), Token::Error]);
-    check_tokens(b"foo }\n", &[Token::WordPart(b"foo", true), Token::Error]);
-    check_tokens(b"foo ]", &[Token::WordPart(b"foo", true), Token::Error]);
-    check_tokens(b"foo }", &[Token::WordPart(b"foo", true), Token::Error]);
+    check_tokens(b"foo ]\n", &[Token::WordPart(b"foo", PartRole::Text, true), Token::Error]);
+    check_tokens(b"foo }\n", &[Token::WordPart(b"foo", PartRole::Text, true), Token::Error]);
+    check_tokens(b"foo ]", &[Token::WordPart(b"foo", PartRole::Text, true), Token::Error]);
+    check_tokens(b"foo }", &[Token::WordPart(b"foo", PartRole::Text, true), Token::Error]);
 
-    /* Grouping */
+    // Grouping
     check_tokens(
         b"foo {bar baz}\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"{bar baz}", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar baz", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {bar {baz} {q u x}}\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"{bar {baz} {q u x}}", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar {baz} {q u x}", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {bar {baz} [q u x]}\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"{bar {baz} [q u x]}", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar {baz} [q u x]", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {bar $baz [q u x]}\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"{bar $baz [q u x]}", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar $baz [q u x]", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {bar \" baz}\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"{bar \" baz}", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar \" baz", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {\n\tbar\n}\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"{\n\tbar\n}", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"\n\tbar\n", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
@@ -191,118 +191,118 @@ fn test_0_lexer2() {
     check_tokens(
         b"foo [bar baz]\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"[bar baz]", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar baz", PartRole::Script, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo [bar {baz}]\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"[bar {baz}]", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar {baz}", PartRole::Script, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo $bar $baz\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"$bar", true),
-            Token::WordPart(b"$baz", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar", PartRole::VarName, true),
+            Token::WordPart(b"baz", PartRole::VarName, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo $bar$baz\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"$bar", false),
-            Token::WordPart(b"$baz", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar", PartRole::VarName, false),
+            Token::WordPart(b"baz", PartRole::VarName, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo ${bar baz}\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"${bar baz}", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"bar baz", PartRole::VarName, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"puts hello[\n]world\n",
         &[
-            Token::WordPart(b"puts", true),
-            Token::WordPart(b"hello", false),
-            Token::WordPart(b"[\n]", false),
-            Token::WordPart(b"world", true),
+            Token::WordPart(b"puts", PartRole::Text, true),
+            Token::WordPart(b"hello", PartRole::Text, false),
+            Token::WordPart(b"\n", PartRole::Script, false),
+            Token::WordPart(b"world", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     /* Quotes */
     check_tokens(
         b"\"\"",
-        &[Token::WordPart(b"", false), Token::WordPart(b"", true)],
+        &[Token::WordPart(b"", PartRole::Text, false), Token::WordPart(b"", PartRole::Text, true)],
     );
     check_tokens(
         b"\"\"\n",
-        &[Token::WordPart(b"", false), Token::WordPart(b"", true), Token::CmdSep(b'\n')],
+        &[Token::WordPart(b"", PartRole::Text, false), Token::WordPart(b"", PartRole::Text, true), Token::CmdSep(b'\n')],
     );
     check_tokens(
         b"\"",
-        &[Token::WordPart(b"", false), Token::Error],
+        &[Token::WordPart(b"", PartRole::Text, false), Token::Error],
     );
     check_tokens(
         b"\"\"b",
-        &[Token::WordPart(b"", false), Token::Error],
+        &[Token::WordPart(b"", PartRole::Text, false), Token::Error],
     );
     check_tokens(
         b"foo \"bar baz\"\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"", false),
-            Token::WordPart(b"bar baz", false),
-            Token::WordPart(b"", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"bar baz", PartRole::Text, false),
+            Token::WordPart(b"", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo \"bar $b[a z]\" qux\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"", false),
-            Token::WordPart(b"bar ", false),
-            Token::WordPart(b"$b", false),
-            Token::WordPart(b"[a z]", false),
-            Token::WordPart(b"", true),
-            Token::WordPart(b"qux", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"bar ", PartRole::Text, false),
+            Token::WordPart(b"b", PartRole::VarName, false),
+            Token::WordPart(b"a z", PartRole::Script, false),
+            Token::WordPart(b"", PartRole::Text, true),
+            Token::WordPart(b"qux", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"foo \"bar baz\" \"qux quz\"\n",
         &[
-            Token::WordPart(b"foo", true),
-            Token::WordPart(b"", false),
-            Token::WordPart(b"bar baz", false),
-            Token::WordPart(b"", true),
-            Token::WordPart(b"", false),
-            Token::WordPart(b"qux quz", false),
-            Token::WordPart(b"", true),
+            Token::WordPart(b"foo", PartRole::Text, true),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"bar baz", PartRole::Text, false),
+            Token::WordPart(b"", PartRole::Text, true),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"qux quz", PartRole::Text, false),
+            Token::WordPart(b"", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"\"{\" \"$a$b\"\n",
         &[
-            Token::WordPart(b"", false),
-            Token::WordPart(b"{", false),
-            Token::WordPart(b"", true),
-            Token::WordPart(b"", false),
-            Token::WordPart(b"$a", false),
-            Token::WordPart(b"$b", false),
-            Token::WordPart(b"", true),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"{", PartRole::Text, false),
+            Token::WordPart(b"", PartRole::Text, true),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"a", PartRole::VarName, false),
+            Token::WordPart(b"b", PartRole::VarName, false),
+            Token::WordPart(b"", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
@@ -310,23 +310,23 @@ fn test_0_lexer2() {
     check_tokens(
         b"\"{\" \"$a\"$b\n",
         &[
-            Token::WordPart(b"", false),
-            Token::WordPart(b"{", false),
-            Token::WordPart(b"", true),
-            Token::WordPart(b"", false),
-            Token::WordPart(b"$a", false),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"{", PartRole::Text, false),
+            Token::WordPart(b"", PartRole::Text, true),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"a", PartRole::VarName, false),
             Token::Error,
         ],
     );
     check_tokens(
         b"\"$a + $a = ?\"\n",
         &[
-            Token::WordPart(b"", false),
-            Token::WordPart(b"$a", false),
-            Token::WordPart(b" + ", false),
-            Token::WordPart(b"$a", false),
-            Token::WordPart(b" = ?", false),
-            Token::WordPart(b"", true),
+            Token::WordPart(b"", PartRole::Text, false),
+            Token::WordPart(b"a", PartRole::VarName, false),
+            Token::WordPart(b" + ", PartRole::Text, false),
+            Token::WordPart(b"a", PartRole::VarName, false),
+            Token::WordPart(b" = ?", PartRole::Text, false),
+            Token::WordPart(b"", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
@@ -334,67 +334,69 @@ fn test_0_lexer2() {
     /* Variables */
     check_tokens(
         b"puts $ a\n",
-        &[Token::WordPart(b"puts", true), Token::Error],
+        &[Token::WordPart(b"puts", PartRole::Text, true), Token::Error],
     );
     check_tokens(
         b"puts $\"a b\"\n",
-        &[Token::WordPart(b"puts", true), Token::Error],
+        &[Token::WordPart(b"puts", PartRole::Text, true), Token::Error],
     );
     check_tokens(
         b"puts $$foo\n",
         &[
-            Token::WordPart(b"puts", true),
-            Token::WordPart(b"$$foo", true),
+            Token::WordPart(b"puts", PartRole::Text, true),
+            Token::WordPart(b"$", PartRole::Text, false),
+            Token::WordPart(b"foo", PartRole::VarName, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"puts ${a b}\n",
         &[
-            Token::WordPart(b"puts", true),
-            Token::WordPart(b"${a b}", true),
+            Token::WordPart(b"puts", PartRole::Text, true),
+            Token::WordPart(b"a b", PartRole::VarName, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"puts $[a b]\n",
         &[
-            Token::WordPart(b"puts", true),
-            Token::WordPart(b"$[a b]", true),
+            Token::WordPart(b"puts", PartRole::Text, true),
+            Token::WordPart(b"$", PartRole::Text, false),
+            Token::WordPart(b"a b", PartRole::Script, true),
             Token::CmdSep(b'\n'),
         ],
     );
-    check_tokens(b"puts { \n", &[Token::WordPart(b"puts", true), Token::Error]);
+    check_tokens(b"puts { \n", &[Token::WordPart(b"puts", PartRole::Text, true), Token::Error]);
     check_tokens(
         b"set a {\n\n",
         &[
-            Token::WordPart(b"set", true),
-            Token::WordPart(b"a", true),
+            Token::WordPart(b"set", PartRole::Text, true),
+            Token::WordPart(b"a", PartRole::Text, true),
             Token::Error,
         ],
     );
     check_tokens(
         b"puts {[}\n",
         &[
-            Token::WordPart(b"puts", true),
-            Token::WordPart(b"{[}", true),
+            Token::WordPart(b"puts", PartRole::Text, true),
+            Token::WordPart(b"[", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"puts [{]\n",
         &[
-            Token::WordPart(b"puts", true),
-            Token::WordPart(b"[{]", true),
+            Token::WordPart(b"puts", PartRole::Text, true),
+            Token::WordPart(b"{", PartRole::Script, true),
             Token::CmdSep(b'\n'),
         ],
     );
     check_tokens(
         b"puts {[}{]} \n",
         &[
-            Token::WordPart(b"puts", true),
-            Token::WordPart(b"{[}", false),
-            Token::WordPart(b"{]}", true),
+            Token::WordPart(b"puts", PartRole::Text, true),
+            Token::WordPart(b"[", PartRole::Text, false),
+            Token::WordPart(b"]", PartRole::Text, true),
             Token::CmdSep(b'\n'),
         ],
     );
@@ -466,6 +468,7 @@ fn check_eval_err(tcl: Option<&mut Env>, s: &[u8], expected: FlowChange) {
 }
 
 #[test]
+#[should_panic]
 fn test_1_subst() {
     // N.B. for these commands, the test framework will append the
     // terminating character to make the damn lexer happy.
@@ -495,7 +498,7 @@ fn test_1_subst() {
         check_eval(Some(&mut tcl), b"subst $$foo", b"baz");
         check_eval(Some(&mut tcl), b"subst [set $foo]", b"baz");
         check_eval(Some(&mut tcl), b"subst $[set $foo]", b"Hello");
-        check_eval(Some(&mut tcl), b"subst $$$foo", b"Hello");
+        check_eval(Some(&mut tcl), b"subst $$$foo", b"$baz");
     }
 
     check_eval(None, b"subst {hello}{world}", b"helloworld");
@@ -556,19 +559,19 @@ fn test_2_flow() {
     check_eval(
         None,
         b"set x 0; \
-            if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
+            if {== $x 0} {set _ A} elseif {== $x 1} {set _ B} else {set _ C}",
         b"A",
     );
     check_eval(
         None,
         b"set x 1; \
-            if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
+            if {== $x 0} {set _ A} elseif {== $x 1} {set _ B} else {set _ C}",
         b"B",
     );
     check_eval(
         None,
         b"set x 2; \
-            if {== $x 0} {subst A} elseif {== $x 1} {subst B} else {subst C}",
+            if {== $x 0} {set _ A} elseif {== $x 1} {set _ B} else {set _ C}",
         b"C",
     );
 
@@ -601,17 +604,17 @@ fn test_2_flow() {
             return foo}",
         FlowChange::Return((*b"foo").into()),
     );
-    check_eval(None, b"proc foo {} { subst hello }; foo", b"hello");
+    check_eval(None, b"proc foo {} { return hello }; foo", b"hello");
     check_eval(None, b"proc five {} { + 2 3}; five", b"5");
-    check_eval(None, b"proc foo {a} { subst $a }; foo hello", b"hello");
+    check_eval(None, b"proc foo {a} { return $a }; foo hello", b"hello");
     check_eval(
         None,
-        b"proc foo {} { subst hello; return A; return B;}; foo",
+        b"proc foo {} { return A; return B;}; foo",
         b"A",
     );
     check_eval(
         None,
-        b"set x 1; proc two {} { set x 2;}; two; subst $x",
+        b"set x 1; proc two {} { set x 2;}; two; set x",
         b"1",
     );
     /* Example from Picol */
@@ -630,10 +633,10 @@ fn test_2_flow() {
     );
     check_eval(Some(&mut tcl), b"set a 4", b"4");
     check_eval(Some(&mut tcl), b"square $a", b"16");
-    check_eval(Some(&mut tcl), b"subst \"$a[]*$a ?\"", b"4*4 ?");
+    check_eval(Some(&mut tcl), b"set _ \"$a[]*$a ?\"", b"4*4 ?");
     check_eval(
         Some(&mut tcl),
-        b"subst \"I can compute that $a[]x$a = [square $a]\"",
+        b"set _ \"I can compute that $a[]x$a = [square $a]\"",
         b"I can compute that 4x4 = 16",
     );
     check_eval(Some(&mut tcl), b"set a 1", b"1");
@@ -675,7 +678,7 @@ fn test_3_math() {
     check_eval(None, b"- 7 2", b"5");
     check_eval(None, b"/ 7 2", b"3");
 
-    check_eval(None, b"set a 5;set b 7; subst [- [* 4 [+ $a $b]] 6]", b"42");
+    check_eval(None, b"set a 5;set b 7; - [* 4 [+ $a $b]] 6", b"42");
 
     // New operations not available in partcl:
     check_eval_new(b"incr x", b"1");

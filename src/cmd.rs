@@ -26,12 +26,6 @@ pub fn cmd_set(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Flo
     }
 }
 
-/// Implementation of the `subst` standard command.
-pub fn cmd_subst(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
-    let s = &args[1];
-    tcl.subst(s)
-}
-
 /// Implementation of the `incr` standard command (feature `incr`).
 #[cfg(feature = "incr")]
 pub fn cmd_incr(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, FlowChange> {
@@ -233,7 +227,6 @@ pub static STANDARD_COMMANDS: &[(&Value, usize, StaticCmd)] = &[
     // So far I consider these commands universal, and haven't felt the need to
     // make them optional. That could be changed.
     (b"set", 0, cmd_set),
-    (b"subst", 2, cmd_subst),
     (b"if", 0, cmd_if),
     (b"while", 3, cmd_while),
     (b"break", 1, |_, _| Err(FlowChange::Break)),
