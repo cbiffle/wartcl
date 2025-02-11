@@ -416,7 +416,9 @@ fn check_eval(tcl: Option<&mut Env>, s: &[u8], expected: &[u8]) {
 
     match tcl.eval(s) {
         Err(FlowChange::Error) => {
-            panic!("eval returned error: {:?}", String::from_utf8_lossy(s));
+            panic!("{:?}: got error, expected: {}",
+                String::from_utf8_lossy(s),
+                String::from_utf8_lossy(expected));
         }
         Ok(value) => {
             assert_eq!(
@@ -486,6 +488,8 @@ fn test_1_subst() {
         tcl.set_or_create_var((*b"foo").into(), (*b"bar").into());
         tcl.set_or_create_var((*b"bar").into(), (*b"baz").into());
         tcl.set_or_create_var((*b"baz").into(), (*b"Hello").into());
+        check_eval(Some(&mut tcl), b"set foo", b"bar");
+        check_eval(Some(&mut tcl), b"set $foo", b"baz");
         check_eval(Some(&mut tcl), b"subst $foo", b"bar");
         check_eval(Some(&mut tcl), b"subst $foo[]$foo", b"barbar");
         check_eval(Some(&mut tcl), b"subst $$foo", b"baz");
