@@ -214,12 +214,12 @@ impl Env {
                 Some(Token::Error) => return Err(FlowChange::Error),
 
                 // Accumulate string pieces.
-                Some(Token::Word(w) | Token::Part(w)) => {
-                    strpieces.push(self.subst(w)?);
-                    // Word(_) marks the _end_ of a piece, so transfer it to the
-                    // command.
+                Some(Token::Part(w) | Token::Word(w)) => {
+                    let s = self.subst(w)?;
                     if matches!(tok, Some(Token::Word(_))) {
-                        command.push(drain_and_flatten_string(&mut strpieces));
+                        command.push(drain_and_flatten_string(&mut strpieces, s));
+                    } else {
+                        strpieces.push(s);
                     }
                 }
 
@@ -498,20 +498,24 @@ pub type Value = [u8];
 pub type OwnedValue = Box<Value>;
 
 /// Produces a newly allocated string value that contains all the elements of
-/// `v` concatenated together, with no intervening bytes. This operation is
-/// useful for pasting strings together during substitution handling.
+/// `v` concatenated together, followed by the contents of `last`, with no
+/// intervening bytes. This operation is useful for pasting strings together
+/// during substitution handling.
 ///
-/// The vec `v` is left empty after this call. Its elements are deallocated,
-/// unless it only contained one, in which case that element is returned.
-fn drain_and_flatten_string(v: &mut Vec<OwnedValue>) -> OwnedValue {
-    if v.len() == 1 {
-        return v.pop().unwrap();
+/// The vec `v` is left empty after this call. Its elements are deallocated. In
+/// the special (but common) case where `v` is empty, we just return `last` to
+/// reuse its allocation.
+fn drain_and_flatten_string(v: &mut Vec<OwnedValue>, last: OwnedValue) -> OwnedValue {
+    if v.is_empty() {
+        return last;
     }
-    let len = v.iter().map(|component| component.len()).sum::<usize>();
+    let len = v.iter().map(|component| component.len()).sum::<usize>()
+        + last.len();
     let mut out = Vec::with_capacity(len);
     for component in v.drain(..) {
         out.extend_from_slice(&component);
     }
+    out.extend_from_slice(&last);
     out.into()
 }
 
