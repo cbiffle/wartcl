@@ -345,14 +345,20 @@ fn test_0_lexer2() {
         b"puts $ a\n",
         &[
             text(b"puts"),
-            Token::Error,
+            text(b"$"),
+            text(b"a"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"puts $\"a b\"\n",
         &[
             text(b"puts"),
-            Token::Error,
+            text_incomplete(b"$"),
+            text_incomplete(b""),
+            text_incomplete(b"a b"),
+            text(b""),
+            sep(b'\n'),
         ],
     );
     check_tokens(

@@ -538,21 +538,27 @@ impl<'a> Iterator for Tokenizer<'a> {
         };
         let orig_input = mem::replace(&mut self.input, rest);
 
-        // Detect, and skip, command separators.
-        if matches!(first, b'\n' | b'\r' | b';') {
-            return Some(Token::CmdSep(first));
-        }
+        // Any path that wants to leave the match below without returning must
+        // fill in these values:
+        //
+        // Length of token in bytes.
+        let taken: usize;
+        // Whether the one additional byte of input should be skipped after this
+        // token (for e.g. closing delimiters).
+        let skipchar: bool;
+        // Role of the token.
+        let role : PartRole;
 
-        let (taken, dropchar, role) = match (first, rest.first(), self.in_quoted_string) {
+        match (first, rest.first(), self.in_quoted_string) {
+            // Command separators.
+            (b'\n' | b'\r' | b';', _, _) => return Some(Token::CmdSep(first)),
+
             // Characters that cannot legally appear at the end of input.
             (b'$' | b'[' | b'{', None, _) => return Some(Token::Error),
 
             // Characters that cannot appear at the start of a word, outside of
             // quote mode.
             (b']', _, _) | (b'}', _, false) => return Some(Token::Error),
-
-            // Characters that cannot follow a dollar sign
-            (b'$', Some(b' ' | b'"'), _) => return Some(Token::Error),
 
             // Variable name.
             (b'$', Some(b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'{'), _) => {
@@ -575,10 +581,11 @@ impl<'a> Iterator for Tokenizer<'a> {
             (b'$', nxt, _) => return Some(Token::WordPart(
                 b"$",
                 PartRole::Text,
-                nxt.is_none(),
+                nxt.is_none_or(|c| is_splice_end(*c)),
             )),
             (b'[', _, _) | (b'{', _, false) => {
-                let (last, role) = if first == b'[' {
+                let last;
+                (last, role) = if first == b'[' {
                     (b']', PartRole::Script)
                 } else {
                     (b'}', PartRole::Text)
@@ -593,7 +600,10 @@ impl<'a> Iterator for Tokenizer<'a> {
                     depth == 0
                 });
                 match p {
-                    Some(p) => (p, true, role),
+                    Some(p) => {
+                        taken = p - 1;
+                        skipchar = true;
+                    }
                     None => {
                         self.input = &[];
                         return Some(Token::Error);
@@ -603,18 +613,18 @@ impl<'a> Iterator for Tokenizer<'a> {
             (b'"', nxt, _) => {
                 self.in_quoted_string = !self.in_quoted_string;
 
-                if self.in_quoted_string {
+                return Some(if self.in_quoted_string {
                     // New quoted string. Return an empty part as a hack to
                     // restart tokenization with the quote flag on.
-                    return Some(Token::WordPart(b"", PartRole::Text, false));
+                    Token::WordPart(b"", PartRole::Text, false)
                 } else {
                     // Leaving a quoted string.
-                    return Some(match nxt {
-                        None => Token::WordPart(b"", PartRole::Text, true),
-                        Some(c) if is_splice_end(*c) => Token::WordPart(b"", PartRole::Text, true),
-                        _ => Token::Error,
-                    });
-                }
+                    if nxt.is_none_or(|c| is_splice_end(*c)) {
+                        Token::WordPart(b"", PartRole::Text, true)
+                    } else {
+                        Token::Error
+                    }
+                });
             }
             _ => {
                 // Gonna try and lex a normal everyday word. We will include
@@ -622,24 +632,23 @@ impl<'a> Iterator for Tokenizer<'a> {
                 // which means stopping at whitespace outside of quotes, and
                 // _not_ stopping at whitespace inside.
                 //
-                // Note that we are splitting the input, _not_ rest, because we
-                // want to include the leading character.
-                let p = orig_input.iter().position(|c| {
+                // Rewind the input to restore the initial character.
+                self.input = orig_input;
+
+                // Split the input at the next boundary.
+                let p = self.input.iter().position(|c| {
                     matches!(c, b'$' | b'[' | b']' | b'"')
                         || (!self.in_quoted_string && (matches!(c, b'{' | b'}') || is_splice_end(*c)))
-                }).unwrap_or(orig_input.len());
-                self.input = orig_input;
-                (p, false, PartRole::Text)
+                }).unwrap_or(self.input.len());
+
+                (taken, skipchar, role) = (p, false, PartRole::Text);
             }
-        };
+        }
+
         let (word, rest) = self.input.split_at(taken);
-        self.input = rest;
+        self.input = rest.get(skipchar as usize..).unwrap_or(rest);
         Some(Token::WordPart(
-            if dropchar {
-                &word[..word.len() - 1]
-            } else {
-                word
-            },
+            word,
             role,
             !self.in_quoted_string
                 && self.input.first().is_none_or(|&c| is_splice_end(c)),
