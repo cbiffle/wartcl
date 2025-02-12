@@ -42,8 +42,9 @@ fn check_tokens(input: &[u8], expect: &[Token]) {
     let mut found = 0;
     for tok in p {
         found += 1;
-        let (ex_i, &ex_tok) =
-            expect.next().expect("more tokens in input than expected");
+        let Some((ex_i, &ex_tok)) = expect.next() else {
+            panic!("found more tokens in input than expected, starting with: {tok:?}");
+        };
         assert_eq!(
             tok,
             ex_tok,
@@ -62,46 +63,54 @@ fn check_tokens(input: &[u8], expect: &[Token]) {
     }
 }
 
+fn sep<'a>(c: u8) -> Token<'a> { Token::CmdSep(c) }
+fn text_incomplete(t: &[u8]) -> Token<'_> { Token::WordPart(t, PartRole::Text, false) }
+fn text(t: &[u8]) -> Token<'_> { Token::WordPart(t, PartRole::Text, true) }
+fn script_incomplete(t: &[u8]) -> Token<'_> { Token::WordPart(t, PartRole::Script, false) }
+fn script(t: &[u8]) -> Token<'_> { Token::WordPart(t, PartRole::Script, true) }
+fn var_incomplete(t: &[u8]) -> Token<'_> { Token::WordPart(t, PartRole::VarName, false) }
+fn var(t: &[u8]) -> Token<'_> { Token::WordPart(t, PartRole::VarName, true) }
+
 #[test]
 fn test_0_lexer2() {
     check_tokens(b"", &[]);
-    check_tokens(b"\n", &[Token::CmdSep(b'\n')]);
-    check_tokens(b";\n", &[Token::CmdSep(b';'), Token::CmdSep(b'\n')]);
+    check_tokens(b"\n", &[sep(b'\n')]);
+    check_tokens(b";\n", &[sep(b';'), Token::CmdSep(b'\n')]);
     check_tokens(
         b";;;  ;\n",
         &[
-            Token::CmdSep(b';'),
-            Token::CmdSep(b';'),
-            Token::CmdSep(b';'),
-            Token::CmdSep(b';'),
-            Token::CmdSep(b'\n'),
+            sep(b';'),
+            sep(b';'),
+            sep(b';'),
+            sep(b';'),
+            sep(b'\n'),
         ],
     );
 
     // Regular words
-    check_tokens(b"foo", &[Token::WordPart(b"foo", PartRole::Text, true)]);
+    check_tokens(b"foo", &[text(b"foo")]);
     check_tokens(
         b"foo bar",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar", PartRole::Text, true),
+            text(b"foo"),
+            text(b"bar"),
         ],
     );
     check_tokens(
         b"foo bar\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text(b"bar"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo bar baz\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar", PartRole::Text, true),
-            Token::WordPart(b"baz", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text(b"bar"),
+            text(b"baz"),
+            sep(b'\n'),
         ],
     );
     // Variable substitution: easy case, whitespace separated, basically just
@@ -109,295 +118,301 @@ fn test_0_lexer2() {
     check_tokens(
         b"foo $bar $baz",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar", PartRole::VarName, true),
-            Token::WordPart(b"baz", PartRole::VarName, true),
+            text(b"foo"),
+            var(b"bar"),
+            var(b"baz"),
         ],
     );
     check_tokens(
         b"foo $bar$baz\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar", PartRole::VarName, false),
-            Token::WordPart(b"baz", PartRole::VarName, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            var_incomplete(b"bar"),
+            var(b"baz"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo ${bar baz}\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar baz", PartRole::VarName, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            var(b"bar baz"),
+            sep(b'\n'),
         ],
     );
 
     // Imbalanced braces/brackets
-    check_tokens(b"foo ]\n", &[Token::WordPart(b"foo", PartRole::Text, true), Token::Error]);
-    check_tokens(b"foo }\n", &[Token::WordPart(b"foo", PartRole::Text, true), Token::Error]);
-    check_tokens(b"foo ]", &[Token::WordPart(b"foo", PartRole::Text, true), Token::Error]);
-    check_tokens(b"foo }", &[Token::WordPart(b"foo", PartRole::Text, true), Token::Error]);
+    check_tokens(b"foo ]\n", &[text(b"foo"), Token::Error]);
+    check_tokens(b"foo }\n", &[text(b"foo"), Token::Error]);
+    check_tokens(b"foo ]", &[text(b"foo"), Token::Error]);
+    check_tokens(b"foo }", &[text(b"foo"), Token::Error]);
 
     // Grouping
     check_tokens(
         b"foo {bar baz}\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar baz", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text(b"bar baz"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {bar {baz} {q u x}}\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar {baz} {q u x}", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text(b"bar {baz} {q u x}"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {bar {baz} [q u x]}\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar {baz} [q u x]", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text(b"bar {baz} [q u x]"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {bar $baz [q u x]}\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar $baz [q u x]", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text(b"bar $baz [q u x]"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {bar \" baz}\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
+            text(b"foo"),
             Token::WordPart(b"bar \" baz", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo {\n\tbar\n}\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"\n\tbar\n", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text(b"\n\tbar\n"),
+            sep(b'\n'),
         ],
     );
     // Substitution
     check_tokens(
         b"foo [bar baz]\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar baz", PartRole::Script, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            script(b"bar baz"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo [bar {baz}]\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar {baz}", PartRole::Script, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            script(b"bar {baz}"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo $bar $baz\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar", PartRole::VarName, true),
-            Token::WordPart(b"baz", PartRole::VarName, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            var(b"bar"),
+            var(b"baz"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo $bar$baz\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar", PartRole::VarName, false),
-            Token::WordPart(b"baz", PartRole::VarName, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            var_incomplete(b"bar"),
+            var(b"baz"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo ${bar baz}\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"bar baz", PartRole::VarName, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            var(b"bar baz"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"puts hello[\n]world\n",
         &[
-            Token::WordPart(b"puts", PartRole::Text, true),
-            Token::WordPart(b"hello", PartRole::Text, false),
-            Token::WordPart(b"\n", PartRole::Script, false),
-            Token::WordPart(b"world", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"puts"),
+            text_incomplete(b"hello"),
+            script_incomplete(b"\n"),
+            text(b"world"),
+            sep(b'\n'),
         ],
     );
     /* Quotes */
     check_tokens(
         b"\"\"",
-        &[Token::WordPart(b"", PartRole::Text, false), Token::WordPart(b"", PartRole::Text, true)],
+        &[text_incomplete(b""), text(b"")],
     );
     check_tokens(
         b"\"\"\n",
-        &[Token::WordPart(b"", PartRole::Text, false), Token::WordPart(b"", PartRole::Text, true), Token::CmdSep(b'\n')],
+        &[text_incomplete(b""), text(b""), sep(b'\n')],
     );
     check_tokens(
         b"\"",
-        &[Token::WordPart(b"", PartRole::Text, false), Token::Error],
+        &[text_incomplete(b""), Token::Error],
     );
     check_tokens(
         b"\"\"b",
-        &[Token::WordPart(b"", PartRole::Text, false), Token::Error],
+        &[text_incomplete(b""), Token::Error],
     );
     check_tokens(
         b"foo \"bar baz\"\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"bar baz", PartRole::Text, false),
-            Token::WordPart(b"", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text_incomplete(b""),
+            text_incomplete(b"bar baz"),
+            text(b""),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo \"bar $b[a z]\" qux\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"bar ", PartRole::Text, false),
-            Token::WordPart(b"b", PartRole::VarName, false),
-            Token::WordPart(b"a z", PartRole::Script, false),
-            Token::WordPart(b"", PartRole::Text, true),
-            Token::WordPart(b"qux", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text_incomplete(b""),
+            text_incomplete(b"bar "),
+            var_incomplete(b"b"),
+            script_incomplete(b"a z"),
+            text(b""),
+            text(b"qux"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"foo \"bar baz\" \"qux quz\"\n",
         &[
-            Token::WordPart(b"foo", PartRole::Text, true),
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"bar baz", PartRole::Text, false),
-            Token::WordPart(b"", PartRole::Text, true),
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"qux quz", PartRole::Text, false),
-            Token::WordPart(b"", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"foo"),
+            text_incomplete(b""),
+            text_incomplete(b"bar baz"),
+            text(b""),
+            text_incomplete(b""),
+            text_incomplete(b"qux quz"),
+            text(b""),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"\"{\" \"$a$b\"\n",
         &[
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"{", PartRole::Text, false),
-            Token::WordPart(b"", PartRole::Text, true),
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"a", PartRole::VarName, false),
-            Token::WordPart(b"b", PartRole::VarName, false),
-            Token::WordPart(b"", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text_incomplete(b""),
+            text_incomplete(b"{"),
+            text(b""),
+            text_incomplete(b""),
+            var_incomplete(b"a"),
+            var_incomplete(b"b"),
+            text(b""),
+            sep(b'\n'),
         ],
     );
 
     check_tokens(
         b"\"{\" \"$a\"$b\n",
         &[
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"{", PartRole::Text, false),
-            Token::WordPart(b"", PartRole::Text, true),
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"a", PartRole::VarName, false),
+            text_incomplete(b""),
+            text_incomplete(b"{"),
+            text(b""),
+            text_incomplete(b""),
+            var_incomplete(b"a"),
             Token::Error,
         ],
     );
     check_tokens(
         b"\"$a + $a = ?\"\n",
         &[
-            Token::WordPart(b"", PartRole::Text, false),
-            Token::WordPart(b"a", PartRole::VarName, false),
-            Token::WordPart(b" + ", PartRole::Text, false),
-            Token::WordPart(b"a", PartRole::VarName, false),
-            Token::WordPart(b" = ?", PartRole::Text, false),
-            Token::WordPart(b"", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text_incomplete(b""),
+            var_incomplete(b"a"),
+            text_incomplete(b" + "),
+            var_incomplete(b"a"),
+            text_incomplete(b" = ?"),
+            text(b""),
+            sep(b'\n'),
         ],
     );
 
     /* Variables */
     check_tokens(
         b"puts $ a\n",
-        &[Token::WordPart(b"puts", PartRole::Text, true), Token::Error],
+        &[
+            text(b"puts"),
+            Token::Error,
+        ],
     );
     check_tokens(
         b"puts $\"a b\"\n",
-        &[Token::WordPart(b"puts", PartRole::Text, true), Token::Error],
+        &[
+            text(b"puts"),
+            Token::Error,
+        ],
     );
     check_tokens(
         b"puts $$foo\n",
         &[
-            Token::WordPart(b"puts", PartRole::Text, true),
-            Token::WordPart(b"$", PartRole::Text, false),
-            Token::WordPart(b"foo", PartRole::VarName, true),
-            Token::CmdSep(b'\n'),
+            text(b"puts"),
+            text_incomplete(b"$"),
+            var(b"foo"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"puts ${a b}\n",
         &[
-            Token::WordPart(b"puts", PartRole::Text, true),
-            Token::WordPart(b"a b", PartRole::VarName, true),
-            Token::CmdSep(b'\n'),
+            text(b"puts"),
+            var(b"a b"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"puts $[a b]\n",
         &[
-            Token::WordPart(b"puts", PartRole::Text, true),
-            Token::WordPart(b"$", PartRole::Text, false),
-            Token::WordPart(b"a b", PartRole::Script, true),
-            Token::CmdSep(b'\n'),
+            text(b"puts"),
+            text_incomplete(b"$"),
+            script(b"a b"),
+            sep(b'\n'),
         ],
     );
-    check_tokens(b"puts { \n", &[Token::WordPart(b"puts", PartRole::Text, true), Token::Error]);
+    check_tokens(b"puts { \n", &[text(b"puts"), Token::Error]);
     check_tokens(
         b"set a {\n\n",
         &[
-            Token::WordPart(b"set", PartRole::Text, true),
-            Token::WordPart(b"a", PartRole::Text, true),
+            text(b"set"),
+            text(b"a"),
             Token::Error,
         ],
     );
     check_tokens(
         b"puts {[}\n",
         &[
-            Token::WordPart(b"puts", PartRole::Text, true),
-            Token::WordPart(b"[", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"puts"),
+            text(b"["),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"puts [{]\n",
         &[
-            Token::WordPart(b"puts", PartRole::Text, true),
-            Token::WordPart(b"{", PartRole::Script, true),
-            Token::CmdSep(b'\n'),
+            text(b"puts"),
+            script(b"{"),
+            sep(b'\n'),
         ],
     );
     check_tokens(
         b"puts {[}{]} \n",
         &[
-            Token::WordPart(b"puts", PartRole::Text, true),
-            Token::WordPart(b"[", PartRole::Text, false),
-            Token::WordPart(b"]", PartRole::Text, true),
-            Token::CmdSep(b'\n'),
+            text(b"puts"),
+            text_incomplete(b"["),
+            text(b"]"),
+            sep(b'\n'),
         ],
     );
 }
