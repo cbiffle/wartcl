@@ -308,15 +308,24 @@ impl Env {
     pub fn set_or_create_var(&mut self, name: OwnedValue, value: OwnedValue) {
         match self.find_var_mut(&name) {
             Some(v) => v.value = value,
-            None => {
-                let next = self.scope.vars.take();
-                self.scope.vars = Some(Box::new(Var {
-                    name,
-                    value,
-                    next,
-                }));
-            }
+            None => self.new_var(name, value),
         }
+    }
+
+    /// Creates a variable named `name` with value `value` in the current scope.
+    ///
+    /// This does not check for an existing variable with the same name, so the
+    /// new variable will effectively "shadow" any existing one. Normally you'd
+    /// use this function in cases where you _know_ the variable is new, to
+    /// avoid lookup costs, such as when creating a function's scope from its
+    /// arguments. In other cases, `set_or_create_var` is a better choice.
+    pub fn new_var(&mut self, name: OwnedValue, value: OwnedValue) {
+        let next = self.scope.vars.take();
+        self.scope.vars = Some(Box::new(Var {
+            name,
+            value,
+            next,
+        }));
     }
 
     /// Gets a reference to the contents of an existing variable, or returns

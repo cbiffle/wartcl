@@ -71,7 +71,7 @@ pub fn cmd_proc(tcl: &mut Env, args: &mut [OwnedValue]) -> Result<OwnedValue, Fl
 
         // Bind all parameters in this new scope.
         for (name, val) in param_names.iter().zip(&mut args[1..]) {
-            tcl.set_or_create_var(name.clone(), mem::take(val));
+            tcl.new_var(name.clone(), mem::take(val));
         }
 
         // Run the procedure.
