@@ -43,10 +43,9 @@ Like `partcl`, this implements a Tcl-like language, not Tcl. `wartcl` mirrors
   Tcl implementations.
 
 This implementation passes the same testsuites as partcl with some light
-changes, which are documented at the beginning of the test section of `lib.rs`.
-(In brief: partcl relies on the ability to do out-of-range accesses that read
-NULs at the end of strings; in Rust we don't NUL-terminate our strings so some
-functions had to change.)
+changes, which are documented in `test.rs`. (In brief: partcl relies on the
+ability to do out-of-range accesses that read NULs at the end of strings; in
+Rust we don't NUL-terminate our strings so some functions had to change.)
 
 Ways this is different from `partcl`:
 
@@ -55,7 +54,7 @@ Ways this is different from `partcl`:
   also means no cryptic pointer arithmetic in for-loops in macros, so the code
   is much easier to follow.
 
-- `wartcl` runs about 4x faster across the board than `partcl`, despite having
+- `wartcl` runs about 5x faster across the board than `partcl`, despite having
   significantly more error checking. (Memory safety means I can more confidently
   apply aggressive optimizations.)
 
